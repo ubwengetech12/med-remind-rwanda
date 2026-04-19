@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { @apply antialiased; }
+  body { @apply bg-gray-950 text-white; }
+  * { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+}
+
+@layer components {
+  .dash-input {
+    @apply bg-gray-800 border border-gray-700 rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-primary-500 transition-colors placeholder:text-gray-500;
+  }
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.animate-pulse-slow { animation: pulse-slow 2s ease-in-out infinite; }
