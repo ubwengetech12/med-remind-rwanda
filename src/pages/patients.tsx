@@ -2,10 +2,10 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { Plus, Search, Phone, Heart, ChevronRight, X, User, AlertCircle, Pill } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Phone, Heart, AlertCircle, Pill, User, Calendar } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
-import { useAuthStore } from '@/store/authStore';
+import { format, parseISO } from 'date-fns';
 
 interface Patient {
   id: string; phone: string; role: string; full_name?: string;
@@ -14,13 +14,14 @@ interface Patient {
 }
 
 export default function PatientsPage() {
-  const { user } = useAuthStore();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [selected, setSelected] = useState<Patient | null>(null);
   const [patientMeds, setPatientMeds] = useState<any[]>([]);
+  const [patientAppts, setPatientAppts] = useState<any[]>([]);
+  const [loadingDetail, setLoadingDetail] = useState(false);
   const [newPatient, setNewPatient] = useState({ phone: '', full_name: '', blood_type: '' });
   const [creating, setCreating] = useState(false);
 
@@ -29,42 +30,36 @@ export default function PatientsPage() {
   const fetchPatients = async () => {
     setLoading(true);
     const { data } = await supabase.from('users').select('*').eq('role', 'patient').order('created_at', { ascending: false });
-    const patients = data || [];
-
-    // Enrich with medication count + adherence
-    const enriched = await Promise.all(patients.map(async (p) => {
-      const [medsRes, logsRes] = await Promise.all([
-        supabase.from('patient_medications').select('id', { count: 'exact' }).eq('user_id', p.id).eq('is_active', true),
-        supabase.from('logs').select('status').eq('user_id', p.id).gte('scheduled_time', new Date(Date.now() - 7 * 86400000).toISOString()),
-      ]);
-      const logs = logsRes.data || [];
-      const taken = logs.filter(l => l.status === 'taken').length;
-      const adherence = logs.length > 0 ? Math.round((taken / logs.length) * 100) : null;
-      return { ...p, _medCount: medsRes.count || 0, _adherence: adherence };
-    }));
-    setPatients(enriched);
+    setPatients(data || []);
     setLoading(false);
   };
 
-  const fetchPatientMeds = async (patientId: string) => {
-    const { data } = await supabase.from('patient_medications').select('*, medication:medications(*)').eq('user_id', patientId).eq('is_active', true);
-    setPatientMeds(data || []);
-  };
-
-  const selectPatient = (p: Patient) => {
+  const openDetail = async (p: Patient) => {
     setSelected(p);
-    fetchPatientMeds(p.id);
+    setLoadingDetail(true);
+    const [medsRes, apptRes, logsRes] = await Promise.all([
+      supabase.from('patient_medications').select('*, medication:medications(*)').eq('user_id', p.id).eq('is_active', true),
+      supabase.from('appointments').select('*').eq('user_id', p.id).order('appointment_date', { ascending: false }).limit(5),
+      supabase.from('logs').select('status').eq('user_id', p.id).gte('scheduled_time', new Date(Date.now() - 7 * 86400000).toISOString()),
+    ]);
+    const logs = logsRes.data || [];
+    const taken = logs.filter(l => l.status === 'taken').length;
+    const adherence = logs.length > 0 ? Math.round((taken / logs.length) * 100) : null;
+    setSelected({ ...p, _medCount: medsRes.data?.length || 0, _adherence: adherence });
+    setPatientMeds(medsRes.data || []);
+    setPatientAppts(apptRes.data || []);
+    setLoadingDetail(false);
   };
 
   const handleCreatePatient = async () => {
     if (!newPatient.phone || !newPatient.full_name) { toast.error('Name and phone required'); return; }
     setCreating(true);
     try {
-      // In production this would use Supabase Admin API or invite flow
-      // For demo, we insert directly (bypasses auth - use admin API in prod)
+      // ── FIX: id is required (text, NOT NULL) — use phone as id like existing rows ──
       const { error } = await supabase.from('users').insert({
-        phone: newPatient.phone,
-        full_name: newPatient.full_name,
+        id: newPatient.phone.trim(),          // ← ADDED: phone used as id
+        phone: newPatient.phone.trim(),
+        full_name: newPatient.full_name.trim(),
         blood_type: newPatient.blood_type || null,
         role: 'patient',
       });
@@ -81,141 +76,169 @@ export default function PatientsPage() {
   };
 
   const filtered = patients.filter(p =>
-    (p.full_name || '').toLowerCase().includes(search.toLowerCase()) ||
-    p.phone.includes(search)
+    (p.full_name || '').toLowerCase().includes(search.toLowerCase()) || p.phone.includes(search)
   );
-
-  const adherenceColor = (n: number | null | undefined) => {
-    if (n == null) return 'text-muted';
-    if (n >= 80) return 'text-green-400';
-    if (n >= 50) return 'text-yellow-400';
-    return 'text-red-400';
-  };
 
   return (
     <DashboardLayout title="Patients">
-      <div className="flex gap-6 h-full">
-        {/* Patient list */}
-        <div className="flex-1 space-y-4">
-          {/* Toolbar */}
-          <div className="flex gap-3">
-            <div className="flex-1 flex items-center gap-2 bg-card border border-border rounded-xl px-3 h-10">
-              <Search size={16} className="text-muted" />
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or phone..."
-                className="flex-1 bg-transparent text-white text-sm outline-none placeholder:text-muted" />
-              {search && <button onClick={() => setSearch('')}><X size={14} className="text-muted" /></button>}
-            </div>
-            <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-400 text-white px-4 rounded-xl text-sm font-semibold transition-colors">
-              <Plus size={16} /> Add Patient
-            </button>
+      <div className="space-y-4">
+        {/* Toolbar */}
+        <div className="flex gap-3">
+          <div className="flex-1 flex items-center gap-2 bg-card border border-border rounded-xl px-3 h-10">
+            <Search size={16} className="text-muted" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search patients..."
+              className="flex-1 bg-transparent text-white text-sm outline-none placeholder:text-muted" />
+            {search && <button onClick={() => setSearch('')}><X size={14} className="text-muted" /></button>}
           </div>
-
-          {/* Table */}
-          <div className="bg-card border border-border rounded-2xl overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-border">
-                  {['Patient', 'Phone', 'Blood Type', 'Active Meds', '7-Day Adherence', ''].map(h => (
-                    <th key={h} className="text-left text-muted text-xs font-semibold uppercase tracking-wider px-4 py-3">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {loading ? (
-                  Array(5).fill(0).map((_, i) => (
-                    <tr key={i}><td colSpan={6} className="px-4 py-3"><div className="h-5 bg-border rounded animate-pulse" /></td></tr>
-                  ))
-                ) : filtered.length === 0 ? (
-                  <tr><td colSpan={6} className="text-center text-muted py-12">No patients found</td></tr>
-                ) : filtered.map(p => (
-                  <tr key={p.id} onClick={() => selectPatient(p)}
-                    className={cn('cursor-pointer hover:bg-white/5 transition-colors', selected?.id === p.id && 'bg-primary-900/20')}>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-primary-900/50 flex items-center justify-center text-primary-400 text-xs font-bold flex-shrink-0">
-                          {(p.full_name || 'P')[0].toUpperCase()}
-                        </div>
-                        <span className="text-white text-sm font-medium">{p.full_name || 'Unnamed Patient'}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-muted text-sm">{p.phone}</td>
-                    <td className="px-4 py-3">
-                      {p.blood_type ? (
-                        <span className="flex items-center gap-1 text-red-400 text-sm"><Heart size={12} />{p.blood_type}</span>
-                      ) : <span className="text-muted text-sm">—</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="flex items-center gap-1 text-white text-sm"><Pill size={12} className="text-primary-400" />{p._medCount}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={cn('text-sm font-semibold', adherenceColor(p._adherence))}>
-                        {p._adherence != null ? `${p._adherence}%` : 'No data'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3"><ChevronRight size={16} className="text-muted" /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <button onClick={() => setShowAdd(true)}
+            className="flex items-center gap-2 bg-primary-500 hover:bg-primary-400 text-white px-4 rounded-xl text-sm font-semibold transition-colors h-10">
+            <Plus size={16} /> Add Patient
+          </button>
         </div>
 
-        {/* Patient detail panel */}
-        {selected && (
-          <div className="w-80 bg-card border border-border rounded-2xl p-5 space-y-5 self-start sticky top-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="w-12 h-12 rounded-2xl bg-primary-900/40 flex items-center justify-center text-primary-400 text-xl font-bold mb-3">
+        {/* Name-only list */}
+        <div className="bg-card border border-border rounded-2xl overflow-hidden">
+          {loading ? (
+            <div className="divide-y divide-border">
+              {Array(6).fill(0).map((_, i) => (
+                <div key={i} className="px-4 py-3 flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-border animate-pulse" />
+                  <div className="h-4 w-40 bg-border rounded animate-pulse" />
+                </div>
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <p className="text-center text-muted py-12">No patients found</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {filtered.map(p => (
+                <button key={p.id} onClick={() => openDetail(p)}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left">
+                  <div className="w-8 h-8 rounded-full bg-primary-900/50 flex items-center justify-center text-primary-400 text-xs font-bold flex-shrink-0">
+                    {(p.full_name || 'P')[0].toUpperCase()}
+                  </div>
+                  <span className="flex-1 text-white text-sm font-medium">{p.full_name || 'Unnamed Patient'}</span>
+                  <ChevronRight size={16} className="text-muted" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Detail Modal */}
+      {selected && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6" onClick={() => setSelected(null)}>
+          <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between p-6 border-b border-border">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-primary-900/40 flex items-center justify-center text-primary-400 text-xl font-bold">
                   {(selected.full_name || 'P')[0].toUpperCase()}
                 </div>
-                <h3 className="text-white font-semibold">{selected.full_name || 'Unnamed'}</h3>
-                <p className="text-muted text-sm flex items-center gap-1 mt-0.5"><Phone size={12} />{selected.phone}</p>
-              </div>
-              <button onClick={() => setSelected(null)} className="text-muted hover:text-white"><X size={18} /></button>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-surface rounded-xl p-3">
-                <p className="text-muted text-xs mb-1">Blood Type</p>
-                <p className="text-white text-sm font-medium flex items-center gap-1">
-                  {selected.blood_type ? <><Heart size={12} className="text-red-400" />{selected.blood_type}</> : '—'}
-                </p>
-              </div>
-              <div className="bg-surface rounded-xl p-3">
-                <p className="text-muted text-xs mb-1">Active Meds</p>
-                <p className="text-white text-sm font-medium">{selected._medCount}</p>
-              </div>
-            </div>
-
-            {selected.allergies && selected.allergies.length > 0 && (
-              <div className="bg-red-900/20 border border-red-900/40 rounded-xl p-3">
-                <p className="text-red-400 text-xs font-semibold mb-2 flex items-center gap-1"><AlertCircle size={12} />Allergies</p>
-                <div className="flex flex-wrap gap-1">
-                  {selected.allergies.map(a => (
-                    <span key={a} className="bg-red-900/40 text-red-300 text-xs rounded-lg px-2 py-0.5">{a}</span>
-                  ))}
+                <div>
+                  <h3 className="text-white font-semibold text-lg">{selected.full_name || 'Unnamed'}</h3>
+                  <p className="text-muted text-sm flex items-center gap-1"><Phone size={12} />{selected.phone}</p>
                 </div>
+              </div>
+              <button onClick={() => setSelected(null)} className="text-muted hover:text-white mt-1"><X size={20} /></button>
+            </div>
+
+            {loadingDetail ? (
+              <div className="p-6 space-y-3">
+                {Array(4).fill(0).map((_, i) => <div key={i} className="h-10 bg-border rounded-xl animate-pulse" />)}
+              </div>
+            ) : (
+              <div className="p-6 space-y-5">
+                {/* Stats */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-surface rounded-xl p-3 text-center">
+                    <p className="text-muted text-xs mb-1">Blood Type</p>
+                    <p className="text-white text-sm font-semibold flex items-center justify-center gap-1">
+                      {selected.blood_type ? <><Heart size={12} className="text-red-400" />{selected.blood_type}</> : '—'}
+                    </p>
+                  </div>
+                  <div className="bg-surface rounded-xl p-3 text-center">
+                    <p className="text-muted text-xs mb-1">Active Meds</p>
+                    <p className="text-white text-sm font-semibold">{selected._medCount ?? 0}</p>
+                  </div>
+                  <div className="bg-surface rounded-xl p-3 text-center">
+                    <p className="text-muted text-xs mb-1">7-day Adherence</p>
+                    <p className={cn('text-sm font-semibold',
+                      selected._adherence == null ? 'text-muted' :
+                      selected._adherence >= 80 ? 'text-green-400' :
+                      selected._adherence >= 50 ? 'text-yellow-400' : 'text-red-400')}>
+                      {selected._adherence != null ? `${selected._adherence}%` : 'N/A'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Joined */}
+                <div className="flex items-center gap-2 text-muted text-xs">
+                  <Calendar size={12} />
+                  <span>Joined {format(parseISO(selected.created_at), 'MMM d, yyyy')}</span>
+                </div>
+
+                {/* Allergies */}
+                {selected.allergies && selected.allergies.length > 0 && (
+                  <div className="bg-red-900/20 border border-red-900/40 rounded-xl p-3">
+                    <p className="text-red-400 text-xs font-semibold mb-2 flex items-center gap-1"><AlertCircle size={12} />Allergies</p>
+                    <div className="flex flex-wrap gap-1">
+                      {selected.allergies.map(a => (
+                        <span key={a} className="bg-red-900/40 text-red-300 text-xs rounded-lg px-2 py-0.5">{a}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Medications */}
+                <div>
+                  <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1">
+                    <Pill size={12} /> Current Medications
+                  </p>
+                  {patientMeds.length === 0 ? (
+                    <p className="text-muted text-sm">No active medications</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {patientMeds.map(m => (
+                        <div key={m.id} className="bg-surface rounded-xl p-3">
+                          <p className="text-white text-sm font-medium">{m.medication?.name}</p>
+                          <p className="text-muted text-xs mt-0.5">{m.dosage} · {(m.schedule_times || []).join(', ')}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Appointments */}
+                {patientAppts.length > 0 && (
+                  <div>
+                    <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1">
+                      <Calendar size={12} /> Recent Appointments
+                    </p>
+                    <div className="space-y-2">
+                      {patientAppts.map(a => (
+                        <div key={a.id} className="bg-surface rounded-xl p-3 flex items-center justify-between">
+                          <div>
+                            <p className="text-white text-sm font-medium">{a.title}</p>
+                            <p className="text-muted text-xs">{format(parseISO(a.appointment_date), 'MMM d, yyyy')} · {a.appointment_time}</p>
+                          </div>
+                          <span className={cn('text-xs px-2 py-0.5 rounded-lg capitalize',
+                            a.status === 'scheduled' ? 'bg-blue-900/30 text-blue-400' :
+                            a.status === 'completed' ? 'bg-green-900/30 text-green-400' :
+                            'bg-red-900/30 text-red-400')}>
+                            {a.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-
-            <div>
-              <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-3">Current Medications</p>
-              {patientMeds.length === 0 ? (
-                <p className="text-muted text-sm">No active medications</p>
-              ) : (
-                <div className="space-y-2">
-                  {patientMeds.map(m => (
-                    <div key={m.id} className="bg-surface rounded-xl p-3">
-                      <p className="text-white text-sm font-medium">{m.medication?.name}</p>
-                      <p className="text-muted text-xs mt-0.5">{m.dosage} · {m.schedule_times.join(', ')}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Add patient modal */}
       {showAdd && (
@@ -227,16 +250,15 @@ export default function PatientsPage() {
             </div>
             <div className="space-y-4">
               {[
-                { label: 'Full Name *', key: 'full_name', type: 'text', placeholder: 'Sarah Johnson' },
-                { label: 'Phone Number *', key: 'phone', type: 'tel', placeholder: '+1 234 567 8900' },
+                { label: 'Full Name *', key: 'full_name', type: 'text', placeholder: 'Jean Pierre' },
+                { label: 'Phone Number *', key: 'phone', type: 'tel', placeholder: '+250 788 000 000' },
                 { label: 'Blood Type', key: 'blood_type', type: 'text', placeholder: 'O+' },
               ].map(f => (
                 <div key={f.key}>
                   <label className="block text-muted text-sm mb-1">{f.label}</label>
                   <input type={f.type} value={(newPatient as any)[f.key]}
                     onChange={e => setNewPatient(p => ({ ...p, [f.key]: e.target.value }))}
-                    placeholder={f.placeholder}
-                    className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-white text-sm outline-none focus:border-primary-500 placeholder:text-muted" />
+                    placeholder={f.placeholder} className="dash-input w-full" />
                 </div>
               ))}
             </div>

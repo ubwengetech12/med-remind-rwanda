@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Head from 'next/head';
 import { supabase } from '@/lib/supabase';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { StatCard } from '@/components/StatCard';
@@ -64,48 +65,61 @@ export default function DashboardPage() {
   };
 
   return (
-    <DashboardLayout title="Overview">
-      <div className="space-y-6">
-        {/* Stat cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-          <StatCard label="Total Patients" value={stats.totalPatients} icon={<Users size={20} />} color="blue" loading={loading} />
-          <StatCard label="Medications" value={stats.totalMedications} icon={<Pill size={20} />} color="green" loading={loading} />
-          <StatCard label="Missed Today" value={stats.missedDosesToday} icon={<AlertTriangle size={20} />} color="red" loading={loading} urgent={stats.missedDosesToday > 0} />
-          <StatCard label="Avg Adherence" value={`${stats.avgAdherence}%`} icon={<TrendingUp size={20} />} color="purple" loading={loading} />
-          <StatCard label="Appts Today" value={stats.appointmentsToday} icon={<Calendar size={20} />} color="yellow" loading={loading} />
-          <StatCard label="SOS Alerts" value={stats.emergencyAlerts} icon={<Activity size={20} />} color="red" loading={loading} urgent={stats.emergencyAlerts > 0} />
-        </div>
+    <>
+      <Head>
+        <title>MedWise — Smart Pharmacy Platform</title>
+        <meta name="description" content="Helping patients never miss a dose. Medication reminders, appointments & monitoring." />
+        <meta property="og:title" content="MedWise — Smart Pharmacy Platform" />
+        <meta property="og:description" content="Helping patients never miss a dose. Medication reminders, appointments & monitoring." />
+        <meta property="og:image" content="https://YOUR-VERCEL-URL.vercel.app/medecine.jpg" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://YOUR-VERCEL-URL.vercel.app" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:image" content="https://YOUR-VERCEL-URL.vercel.app/medecine.jpg" />
+      </Head>
 
-        {/* Charts row */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          <div className="xl:col-span-2">
-            <AdherenceChart />
+      <DashboardLayout title="Overview">
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+            <StatCard label="Total Patients" value={stats.totalPatients} icon={<Users size={20} />} color="blue" loading={loading} />
+            <StatCard label="Medications" value={stats.totalMedications} icon={<Pill size={20} />} color="green" loading={loading} />
+            <StatCard label="Missed Today" value={stats.missedDosesToday} icon={<AlertTriangle size={20} />} color="red" loading={loading} urgent={stats.missedDosesToday > 0} />
+            <StatCard label="Avg Adherence" value={`${stats.avgAdherence}%`} icon={<TrendingUp size={20} />} color="purple" loading={loading} />
+            <StatCard label="Appts Today" value={stats.appointmentsToday} icon={<Calendar size={20} />} color="yellow" loading={loading} />
+            <StatCard label="SOS Alerts" value={stats.emergencyAlerts} icon={<Activity size={20} />} color="red" loading={loading} urgent={stats.emergencyAlerts > 0} />
           </div>
-          <div className="bg-card rounded-2xl border border-border p-5">
-            <h3 className="text-white font-semibold mb-4">Adherence Summary</h3>
-            <div className="space-y-4">
-              {[
-                { label: 'Taken on time', pct: stats.avgAdherence, color: 'bg-green-500' },
-                { label: 'Taken late', pct: Math.max(0, 100 - stats.avgAdherence - stats.missedDosesToday * 5), color: 'bg-yellow-500' },
-                { label: 'Skipped', pct: 100 - stats.avgAdherence, color: 'bg-red-500' },
-              ].map(item => (
-                <div key={item.label}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="text-muted">{item.label}</span>
-                    <span className="text-white font-medium">{Math.max(0, item.pct)}%</span>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <div className="xl:col-span-2">
+              <AdherenceChart />
+            </div>
+            <div className="bg-card rounded-2xl border border-border p-5">
+              <h3 className="text-white font-semibold mb-4">Adherence Summary</h3>
+              <div className="space-y-4">
+                {[
+                  { label: 'Taken on time', pct: stats.avgAdherence, color: 'bg-green-500' },
+                  { label: 'Taken late', pct: Math.max(0, 100 - stats.avgAdherence - stats.missedDosesToday * 5), color: 'bg-yellow-500' },
+                  { label: 'Skipped', pct: 100 - stats.avgAdherence, color: 'bg-red-500' },
+                ].map(item => (
+                  <div key={item.label}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="text-muted">{item.label}</span>
+                      <span className="text-white font-medium">{Math.max(0, item.pct)}%</span>
+                    </div>
+                    <div className="h-2 bg-border rounded-full overflow-hidden">
+                      <div className={`h-full ${item.color} rounded-full transition-all duration-700`} style={{ width: `${Math.max(0, item.pct)}%` }} />
+                    </div>
                   </div>
-                  <div className="h-2 bg-border rounded-full overflow-hidden">
-                    <div className={`h-full ${item.color} rounded-full transition-all duration-700`} style={{ width: `${Math.max(0, item.pct)}%` }} />
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Missed doses table */}
-        <RecentAlertsTable logs={missedLogs} loading={loading} onRefresh={loadStats} />
-      </div>
-    </DashboardLayout>
+          <RecentAlertsTable logs={missedLogs} loading={loading} onRefresh={loadStats} />
+        </div>
+      </DashboardLayout>
+    </>
   );
 }

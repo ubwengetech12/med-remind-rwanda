@@ -8,52 +8,53 @@ interface User {
   full_name?: string;
 }
 
+interface Pharmacist {
+  name: string;
+  phone: string;
+  job_card_number: string;
+}
+
+interface Pharmacy {
+  name: string;
+  email: string;
+  phone: string;
+  password: string;
+  is_setup_complete: boolean;
+}
+
 interface AuthState {
   user: User | null;
   session: any;
   loading: boolean;
+  pharmacy: Pharmacy | null;
+  pharmacist: Pharmacist | null;
   setUser: (u: User | null) => void;
   setSession: (s: any) => void;
   setLoading: (l: boolean) => void;
-  fetchProfile: () => Promise<void>;
-  signOut: () => Promise<void>;
+  setPharmacy: (p: Pharmacy) => void;
+  setPharmacist: (p: Pharmacist) => void;
+  signOut: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
       session: null,
       loading: true,
+      pharmacy: null,
+      pharmacist: null,
       setUser: (user) => set({ user }),
       setSession: (session) => set({ session }),
       setLoading: (loading) => set({ loading }),
-
-      fetchProfile: async () => {
-        const { supabase } = await import('@/lib/supabase');
-
-        const { data: { user: authUser } } = await supabase.auth.getUser();
-        if (!authUser) { set({ loading: false, user: null }); return; }
-
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('id, phone, role, full_name')
-          .eq('id', authUser.id)
-          .single();
-
-        if (profile) {
-          set({ user: profile, loading: false });
-        } else {
-          set({ user: null, loading: false });
-        }
-      },
-
-      signOut: async () => {
-        const { supabase } = await import('@/lib/supabase');
-        await supabase.auth.signOut();
-        set({ user: null, session: null });
-      },
+      setPharmacy: (pharmacy) => set({ pharmacy }),
+      setPharmacist: (pharmacist) => set({ pharmacist }),
+      signOut: () => set({ user: null, session: null }),
     }),
-    { name: 'medwise-dashboard-auth', partialize: (s) => ({ user: s.user }) }
+    {
+      name: 'medwise-dashboard-auth',
+      skipHydration: true,
+      partialize: (s) => ({ user: s.user, pharmacy: s.pharmacy, pharmacist: s.pharmacist }),
+    }
   )
 );

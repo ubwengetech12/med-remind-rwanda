@@ -1,50 +1,114 @@
 'use client';
 import { useState } from 'react';
-import { motion } from 'framer-motion';
-import { Lock, ArrowRight, RefreshCw, Shield, Eye, EyeOff } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Lock, ArrowRight, RefreshCw, Eye, EyeOff, Building2, User, Phone, CreditCard, Mail } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useRouter } from 'next/router';
 import toast from 'react-hot-toast';
 
-const TEST_PHARMACISTS = [
-  { id: 'pharm001', phone: '+2000000001', password: 'test123', full_name: 'Dr. Alice Pharmacist', role: 'pharmacist' },
-  { id: 'pharm002', phone: '+2000000002', password: 'test123', full_name: 'Dr. Bob Chemist', role: 'pharmacist' },
-];
+type Mode = 'login' | 'setup';
+
+const LOCAL_PHARMACY_ID = 'local-pharmacy-001';
+
+function InputField({ label, icon, value, onChange, placeholder, type = 'text', onEnter }: {
+  label: string; icon: React.ReactNode; value: string;
+  onChange: (v: string) => void; placeholder: string;
+  type?: string; onEnter?: () => void;
+}) {
+  return (
+    <div>
+      <label className="block text-muted text-sm mb-2">{label}</label>
+      <div className="flex items-center bg-gray-800 border border-border rounded-xl px-4 h-12 gap-3">
+        <span className="text-muted flex-shrink-0">{icon}</span>
+        <input
+          type={type}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="flex-1 bg-transparent text-white outline-none placeholder:text-muted text-sm"
+          onKeyDown={e => e.key === 'Enter' && onEnter?.()}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PasswordField({ label, value, onChange, onEnter }: {
+  label: string; value: string; onChange: (v: string) => void; onEnter?: () => void;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div>
+      <label className="block text-muted text-sm mb-2">{label}</label>
+      <div className="flex items-center bg-gray-800 border border-border rounded-xl px-4 h-12 gap-3">
+        <Lock size={16} className="text-muted flex-shrink-0" />
+        <input
+          type={show ? 'text' : 'password'}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="••••••••"
+          className="flex-1 bg-transparent text-white outline-none placeholder:text-muted text-sm"
+          onKeyDown={e => e.key === 'Enter' && onEnter?.()}
+        />
+        <button type="button" onClick={() => setShow(s => !s)} className="text-muted hover:text-white">
+          {show ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
-  const { setUser, setLoading } = useAuthStore();
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const { setUser, setLoading, setPharmacy, setPharmacist, pharmacy, pharmacist } = useAuthStore();
+  const [mode, setMode] = useState<Mode>('login');
   const [loading, setLoadingLocal] = useState(false);
 
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+
+  const [pharmacyName, setPharmacyName] = useState('');
+  const [pharmacyEmail, setPharmacyEmail] = useState('');
+  const [pharmacyPhone, setPharmacyPhone] = useState('');
+  const [pharmacyPassword, setPharmacyPassword] = useState('');
+  const [pharmacistName, setPharmacistName] = useState('');
+  const [pharmacistPhone, setPharmacistPhone] = useState('');
+  const [jobCardNumber, setJobCardNumber] = useState('');
+
   const handleLogin = async () => {
-    if (!username || !password) { toast.error('Enter username and password'); return; }
+    if (!loginEmail || !loginPassword) { toast.error('Enter email and password'); return; }
+    if (!pharmacy?.is_setup_complete) {
+      toast.error('No pharmacy account found. Please set up first.');
+      setMode('setup'); return;
+    }
     setLoadingLocal(true);
-    await new Promise((r) => setTimeout(r, 600));
-
-    if (password !== 'test123') {
-      toast.error('Wrong password');
-      setLoadingLocal(false);
-      return;
+    await new Promise(r => setTimeout(r, 400));
+    if (
+      loginEmail.trim().toLowerCase() !== pharmacy.email.toLowerCase() ||
+      loginPassword !== pharmacy.password
+    ) {
+      toast.error('Wrong email or password');
+      setLoadingLocal(false); return;
     }
-
-    const match = TEST_PHARMACISTS.find(
-      (u) => u.full_name.toLowerCase().replace(/\s/g, '') === username.toLowerCase().replace(/\s/g, '')
-        || u.phone === username
-        || u.id === username
-    );
-
-    if (!match) {
-      toast.error('Pharmacist account not found');
-      setLoadingLocal(false);
-      return;
-    }
-
-    setUser({ id: match.id, phone: match.phone, role: match.role, full_name: match.full_name });
+    setUser({ id: LOCAL_PHARMACY_ID, phone: pharmacy.phone, role: 'pharmacist', full_name: pharmacist?.name || pharmacy.name });
     setLoading(false);
-    toast.success(`Welcome, ${match.full_name}!`);
+    toast.success(`Welcome back, ${pharmacist?.name || pharmacy.name}!`);
+    router.replace('/');
+    setLoadingLocal(false);
+  };
+
+  const handleSetup = async () => {
+    if (!pharmacyName || !pharmacyEmail || !pharmacyPhone || !pharmacyPassword || !pharmacistName || !pharmacistPhone || !jobCardNumber) {
+      toast.error('All fields are required'); return;
+    }
+    if (pharmacyPassword.length < 6) { toast.error('Password must be at least 6 characters'); return; }
+    setLoadingLocal(true);
+    await new Promise(r => setTimeout(r, 400));
+    setPharmacy({ name: pharmacyName, email: pharmacyEmail.trim().toLowerCase(), phone: pharmacyPhone, password: pharmacyPassword, is_setup_complete: true });
+    setPharmacist({ name: pharmacistName, phone: pharmacistPhone, job_card_number: jobCardNumber });
+    setUser({ id: LOCAL_PHARMACY_ID, phone: pharmacyPhone, role: 'pharmacist', full_name: pharmacistName });
+    setLoading(false);
+    toast.success('Pharmacy account created!');
     router.replace('/');
     setLoadingLocal(false);
   };
@@ -71,8 +135,8 @@ export default function LoginPage() {
       </div>
 
       {/* Right panel */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="w-full max-w-sm">
+      <div className="flex-1 flex items-center justify-center p-8 overflow-y-auto">
+        <div className="w-full max-w-sm py-8">
           <div className="lg:hidden flex items-center gap-3 mb-8">
             <div className="w-10 h-10 bg-primary-500/10 rounded-xl flex items-center justify-center">
               <span className="text-xl">💊</span>
@@ -83,65 +147,73 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-            <h2 className="text-white text-2xl font-bold mb-1">Sign in</h2>
-            <p className="text-muted text-sm mb-8">Pharmacist access only</p>
-
-            <label className="block text-muted text-sm mb-2">Username</label>
-            <div className="flex items-center bg-gray-800 border border-border rounded-xl px-4 h-12 gap-3 mb-4">
-              <span className="text-muted">👤</span>
-              <input
-                type="text"
-                value={username}
-                onChange={e => setUsername(e.target.value)}
-                placeholder="Dr. Alice Pharmacist"
-                className="flex-1 bg-transparent text-white outline-none placeholder:text-muted text-sm"
-                onKeyDown={e => e.key === 'Enter' && handleLogin()}
-              />
-            </div>
-
-            <label className="block text-muted text-sm mb-2">Password</label>
-            <div className="flex items-center bg-gray-800 border border-border rounded-xl px-4 h-12 gap-3 mb-6">
-              <Lock size={18} className="text-muted flex-shrink-0" />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                placeholder="test123"
-                className="flex-1 bg-transparent text-white outline-none placeholder:text-muted text-sm"
-                onKeyDown={e => e.key === 'Enter' && handleLogin()}
-              />
-              <button onClick={() => setShowPassword(!showPassword)} className="text-muted hover:text-white">
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
-
-            <button
-              onClick={handleLogin}
-              disabled={loading}
-              className="w-full bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-12 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors"
-            >
-              {loading ? <RefreshCw size={18} className="animate-spin" /> : <><ArrowRight size={18} /> Sign In</>}
-            </button>
-
-            {/* Test accounts */}
-            <div className="mt-6 p-4 bg-gray-800 rounded-xl border border-border space-y-2">
-              <div className="flex items-center gap-2 mb-3">
-                <Shield size={14} className="text-primary-400" />
-                <p className="text-primary-400 text-sm font-medium">Test pharmacist accounts</p>
-              </div>
-              {TEST_PHARMACISTS.map(u => (
-                <button
-                  key={u.id}
-                  onClick={() => { setUsername(u.full_name); setPassword('test123'); }}
-                  className="w-full flex items-center justify-between bg-gray-900 hover:bg-gray-700 rounded-xl px-3 py-2 transition-colors"
-                >
-                  <span className="text-white text-sm">{u.full_name}</span>
-                  <span className="text-muted text-xs font-mono">test123</span>
+          <AnimatePresence mode="wait">
+            {mode === 'login' ? (
+              <motion.div key="login" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}>
+                <h2 className="text-white text-2xl font-bold mb-1">Sign in</h2>
+                <p className="text-muted text-sm mb-8">
+                  {pharmacy?.is_setup_complete ? pharmacy.name : 'Pharmacist access only'}
+                </p>
+                <div className="space-y-4 mb-6">
+                  <InputField label="Email" icon={<Mail size={16} />} value={loginEmail}
+                    onChange={setLoginEmail} placeholder="your@email.com" type="email" onEnter={handleLogin} />
+                  <PasswordField label="Password" value={loginPassword} onChange={setLoginPassword} onEnter={handleLogin} />
+                </div>
+                <button onClick={handleLogin} disabled={loading}
+                  className="w-full bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-12 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors mb-4">
+                  {loading ? <RefreshCw size={18} className="animate-spin" /> : <><ArrowRight size={18} /> Sign In</>}
                 </button>
-              ))}
-            </div>
-          </motion.div>
+                {!pharmacy?.is_setup_complete && (
+                  <p className="text-center text-muted text-sm">
+                    First time?{' '}
+                    <button onClick={() => setMode('setup')} className="text-primary-400 hover:text-primary-300 font-medium">
+                      Set up your pharmacy
+                    </button>
+                  </p>
+                )}
+              </motion.div>
+
+            ) : (
+              <motion.div key="setup" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}>
+                <h2 className="text-white text-2xl font-bold mb-1">Setup Pharmacy</h2>
+                <p className="text-muted text-sm mb-6">One-time registration — you'll use this email & password every day</p>
+
+                <div className="space-y-3 mb-4">
+                  <p className="text-primary-400 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
+                    <Building2 size={12} /> Pharmacy Info
+                  </p>
+                  <InputField label="Pharmacy Name" icon={<Building2 size={15} />} value={pharmacyName}
+                    onChange={setPharmacyName} placeholder="Vision Pharmacy" />
+                  <InputField label="Email" icon={<Mail size={15} />} value={pharmacyEmail}
+                    onChange={setPharmacyEmail} placeholder="vision@pharmacy.com" type="email" />
+                  <InputField label="Phone Number" icon={<Phone size={15} />} value={pharmacyPhone}
+                    onChange={setPharmacyPhone} placeholder="+250 788 000 000" />
+                  <PasswordField label="Password (used every day)" value={pharmacyPassword} onChange={setPharmacyPassword} />
+
+                  <p className="text-primary-400 text-xs font-semibold uppercase tracking-wider flex items-center gap-2 pt-2">
+                    <User size={12} /> Pharmacist Info
+                  </p>
+                  <InputField label="Full Name" icon={<User size={15} />} value={pharmacistName}
+                    onChange={setPharmacistName} placeholder="Dr. Jean Pierre" />
+                  <InputField label="Phone Number" icon={<Phone size={15} />} value={pharmacistPhone}
+                    onChange={setPharmacistPhone} placeholder="+250 788 111 111" />
+                  <InputField label="Job Card Number" icon={<CreditCard size={15} />} value={jobCardNumber}
+                    onChange={setJobCardNumber} placeholder="JC-2024-0001" onEnter={handleSetup} />
+                </div>
+
+                <button onClick={handleSetup} disabled={loading}
+                  className="w-full bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-12 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors mb-4">
+                  {loading ? <RefreshCw size={18} className="animate-spin" /> : <><ArrowRight size={18} /> Create Account</>}
+                </button>
+                <p className="text-center text-muted text-sm">
+                  Already set up?{' '}
+                  <button onClick={() => setMode('login')} className="text-primary-400 hover:text-primary-300 font-medium">
+                    Sign in
+                  </button>
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </div>
