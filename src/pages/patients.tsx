@@ -44,7 +44,7 @@ export default function PatientsPage() {
     ]);
     const logs = logsRes.data || [];
     const taken = logs.filter(l => l.status === 'taken').length;
-    const adherence = logs.length > 0 ? Math.round((taken / logs.length) * 100) : null;
+    const adherence = logs.length > 0 ? Math.round((taken / logs.length) * 100) : undefined;
     setSelected({ ...p, _medCount: medsRes.data?.length || 0, _adherence: adherence });
     setPatientMeds(medsRes.data || []);
     setPatientAppts(apptRes.data || []);
