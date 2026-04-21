@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { buildSmsMessage } from '@/lib/smsTemplates';
+import type { Language } from '@/lib/smsTemplates';
 import { loadSmsSettings } from '@/lib/smsScheduler';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -17,7 +18,7 @@ import {
 interface Step1 {
   full_name: string; id_number: string; phone: string;
   village: string; cell: string; sector: string; district: string;
-  insurance: string; language: string;
+  insurance: string; language: Language;
 }
 interface Step2 { patient_says: string; doctor_found: string; }
 interface Step3 { has_test: boolean; test_name: string; test_notes: string; }
@@ -58,11 +59,11 @@ const FOOD_OPTIONS = [
   { value: 'empty_stomach', label: 'Empty Stomach' },
 ];
 
-const LANGUAGE_OPTIONS = [
-  { value: 'english',    label: 'English' },
+const LANGUAGE_OPTIONS: { value: Language; label: string }[] = [
+  { value: 'english',     label: 'English' },
   { value: 'kinyarwanda', label: 'Kinyarwanda' },
-  { value: 'french',     label: 'French' },
-  { value: 'swahili',    label: 'Swahili' },
+  { value: 'french',      label: 'French' },
+  { value: 'kiswahili',   label: 'Kiswahili' },
 ];
 
 function formatTime(t: string) {
@@ -187,7 +188,7 @@ export default function RegisterPatientPage() {
         const smsSettings = loadSmsSettings();
         const pharmacyName = pharmacy?.name || 'MedWise Pharmacy';
         const supportNumber = pharmacy?.phone || pharmacist?.phone || '';
-        const patientLang = s1.language || smsSettings.language;
+        const patientLang: Language = (s1.language as Language) || smsSettings.language;
 
         const smsTasks = validRx.flatMap((r, _rIdx) =>
           r.schedule_times.map((time, tIdx) => {
