@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuthStore } from '@/store/authStore';
 import { buildSmsMessage } from '@/lib/smsTemplates';
+import type { Language } from '@/lib/smsTemplates';
 import { loadSmsSettings } from '@/lib/smsScheduler';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -30,11 +31,11 @@ const FOOD_OPTIONS = [
   { value: 'empty_stomach', label: 'Empty Stomach' },
 ];
 
-const LANGUAGE_OPTIONS = [
-  { value: 'english',      label: 'English' },
-  { value: 'kinyarwanda',  label: 'Kinyarwanda' },
-  { value: 'french',       label: 'French' },
-  { value: 'swahili',      label: 'Swahili' },
+const LANGUAGE_OPTIONS: { value: Language; label: string }[] = [
+  { value: 'english',    label: 'English' },
+  { value: 'kinyarwanda', label: 'Kinyarwanda' },
+  { value: 'french',     label: 'French' },
+  { value: 'kiswahili',  label: 'Kiswahili' },
 ];
 
 function formatTime(t: string) {
@@ -46,15 +47,14 @@ export default function HospitalPrescriptionPage() {
   const { user, pharmacy, pharmacist } = useAuthStore() as any;
   const pharmacyId = user?.id || 'unknown';
 
-  const [saving, setSaving] = useState(false);
-  const [done, setDone] = useState(false);
-
+  const [saving, setSaving]         = useState(false);
+  const [done, setDone]             = useState(false);
   const [refNumber, setRefNumber]   = useState('');
   const [fullName, setFullName]     = useState('');
   const [phone, setPhone]           = useState('');
   const [hospital, setHospital]     = useState('');
   const [doctorName, setDoctorName] = useState('');
-  const [language, setLanguage]     = useState('english');
+  const [language, setLanguage]     = useState<Language>('english');
   const [diagnosis, setDiagnosis]   = useState('');
   const [rxList, setRxList]         = useState<RxRow[]>([{ ...EMPTY_RX }]);
 
@@ -331,7 +331,9 @@ export default function HospitalPrescriptionPage() {
 
             <button onClick={handleSubmit} disabled={saving}
               className="w-full bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-12 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors">
-              {saving ? <><Loader size={18} className="animate-spin" /> Registering...</> : <><Check size={18} /> Register & Schedule SMS</>}
+              {saving
+                ? <><Loader size={18} className="animate-spin" /> Registering...</>
+                : <><Check size={18} /> Register & Schedule SMS</>}
             </button>
           </>
         )}
