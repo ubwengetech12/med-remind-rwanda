@@ -1,29 +1,33 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Head from 'next/head';
+import { useRouter } from 'next/router';
 import { supabase } from '@/lib/supabase';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { StatCard } from '@/components/StatCard';
-import { AdherenceChart } from '@/components/AdherenceChart';
-import { RecentAlertsTable } from '@/components/RecentAlertsTable';
-import { Users, Pill, AlertTriangle, TrendingUp, Calendar, Activity } from 'lucide-react';
+import { Users, Pill, Calendar, Package, MessageSquare, Activity } from 'lucide-react';
+import { format, parseISO, isToday } from 'date-fns';
+import { cn } from '@/lib/utils';
 
-interface DashboardStats {
-  totalPatients: number;
-  totalMedications: number;
-  missedDosesToday: number;
-  avgAdherence: number;
-  appointmentsToday: number;
-  emergencyAlerts: number;
+interface RecentVisit {
+  id: string;
+  visit_date: string;
+  patient: { full_name?: string; phone: string };
+  visit_prescriptions: { medicine_name: string }[];
 }
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats>({
-    totalPatients: 0, totalMedications: 0, missedDosesToday: 0,
-    avgAdherence: 0, appointmentsToday: 0, emergencyAlerts: 0,
-  });
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [missedLogs, setMissedLogs] = useState<any[]>([]);
+  const [stats, setStats] = useState({
+    totalPatients: 0,
+    totalMedications: 0,
+    appointmentsToday: 0,
+    stockItems: 0,
+    pendingSms: 0,
+    totalVisits: 0,
+  });
+  const [recentVisits, setRecentVisits] = useState<RecentVisit[]>([]);
 
   useEffect(() => { loadStats(); }, []);
 
@@ -31,32 +35,29 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const today = new Date().toISOString().split('T')[0];
-      const todayStart = `${today}T00:00:00.000Z`;
-      const todayEnd = `${today}T23:59:59.999Z`;
 
-      const [patients, medications, logs, appointments, emergency] = await Promise.all([
+      const [patients, medications, visits, stock, sms, appts, recent] = await Promise.all([
         supabase.from('users').select('id', { count: 'exact' }).eq('role', 'patient'),
         supabase.from('medications').select('id', { count: 'exact' }),
-        supabase.from('logs').select('*, medication:medications(name), user:users(full_name,phone)')
-          .gte('scheduled_time', todayStart).lte('scheduled_time', todayEnd),
-        supabase.from('appointments').select('id', { count: 'exact' }).eq('appointment_date', today).eq('status', 'scheduled'),
-        supabase.from('emergency_alerts').select('id', { count: 'exact' }).eq('status', 'active'),
+        supabase.from('patient_visits').select('id', { count: 'exact' }),
+        supabase.from('pharmacy_stock').select('id', { count: 'exact' }).gt('quantity', 0),
+        supabase.from('sms_schedules').select('id', { count: 'exact' }).eq('status', 'pending'),
+        supabase.from('visit_appointments').select('id', { count: 'exact' }).eq('appointment_date', today),
+        supabase.from('patient_visits')
+          .select('id, visit_date, patient:users(full_name, phone), visit_prescriptions(medicine_name)')
+          .order('visit_date', { ascending: false })
+          .limit(5),
       ]);
 
-      const allLogs = logs.data || [];
-      const missed = allLogs.filter(l => l.status === 'skipped');
-      const taken = allLogs.filter(l => l.status === 'taken');
-      const adherence = allLogs.length > 0 ? Math.round((taken.length / allLogs.length) * 100) : 100;
-
-      setMissedLogs(missed);
       setStats({
         totalPatients: patients.count || 0,
         totalMedications: medications.count || 0,
-        missedDosesToday: missed.length,
-        avgAdherence: adherence,
-        appointmentsToday: appointments.count || 0,
-        emergencyAlerts: emergency.count || 0,
+        totalVisits: visits.count || 0,
+        stockItems: stock.count || 0,
+        pendingSms: sms.count || 0,
+        appointmentsToday: appts.count || 0,
       });
+      setRecentVisits((recent.data || []) as any);
     } catch (err) {
       console.error(err);
     } finally {
@@ -67,57 +68,96 @@ export default function DashboardPage() {
   return (
     <>
       <Head>
-        <title>MedWise — Smart Pharmacy Platform</title>
-        <meta name="description" content="Helping patients never miss a dose. Medication reminders, appointments & monitoring." />
-        <meta property="og:title" content="MedWise — Smart Pharmacy Platform" />
-        <meta property="og:description" content="Helping patients never miss a dose. Medication reminders, appointments & monitoring." />
-        <meta property="og:image" content="https://YOUR-VERCEL-URL.vercel.app/medecine.jpg" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://YOUR-VERCEL-URL.vercel.app" />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:image" content="https://YOUR-VERCEL-URL.vercel.app/medecine.jpg" />
+        <title>MedWise — Dashboard</title>
       </Head>
-
       <DashboardLayout title="Overview">
         <div className="space-y-6">
+
+          {/* Stats */}
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-            <StatCard label="Total Patients" value={stats.totalPatients} icon={<Users size={20} />} color="blue" loading={loading} />
-            <StatCard label="Medications" value={stats.totalMedications} icon={<Pill size={20} />} color="green" loading={loading} />
-            <StatCard label="Missed Today" value={stats.missedDosesToday} icon={<AlertTriangle size={20} />} color="red" loading={loading} urgent={stats.missedDosesToday > 0} />
-            <StatCard label="Avg Adherence" value={`${stats.avgAdherence}%`} icon={<TrendingUp size={20} />} color="purple" loading={loading} />
-            <StatCard label="Appts Today" value={stats.appointmentsToday} icon={<Calendar size={20} />} color="yellow" loading={loading} />
-            <StatCard label="SOS Alerts" value={stats.emergencyAlerts} icon={<Activity size={20} />} color="red" loading={loading} urgent={stats.emergencyAlerts > 0} />
+            <StatCard label="Total Patients"   value={stats.totalPatients}    icon={<Users size={20} />}         color="blue"   loading={loading} />
+            <StatCard label="Medications"      value={stats.totalMedications}  icon={<Pill size={20} />}          color="green"  loading={loading} />
+            <StatCard label="Total Visits"     value={stats.totalVisits}       icon={<Activity size={20} />}      color="purple" loading={loading} />
+            <StatCard label="Appts Today"      value={stats.appointmentsToday} icon={<Calendar size={20} />}      color="yellow" loading={loading} urgent={stats.appointmentsToday > 0} />
+            <StatCard label="Stock Items"      value={stats.stockItems}        icon={<Package size={20} />}       color="blue"   loading={loading} />
+            <StatCard label="Pending SMS"      value={stats.pendingSms}        icon={<MessageSquare size={20} />} color="red"    loading={loading} urgent={stats.pendingSms > 0} />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div className="xl:col-span-2">
-              <AdherenceChart />
+          {/* Recent Visits */}
+          <div className="bg-card border border-border rounded-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h3 className="text-white font-semibold flex items-center gap-2">
+                <Activity size={16} className="text-primary-400" /> Recent Visits
+              </h3>
+              <button onClick={() => router.push('/patients')} className="text-primary-400 text-xs hover:text-primary-300 transition-colors">
+                View all →
+              </button>
             </div>
-            <div className="bg-card rounded-2xl border border-border p-5">
-              <h3 className="text-white font-semibold mb-4">Adherence Summary</h3>
-              <div className="space-y-4">
-                {[
-                  { label: 'Taken on time', pct: stats.avgAdherence, color: 'bg-green-500' },
-                  { label: 'Taken late', pct: Math.max(0, 100 - stats.avgAdherence - stats.missedDosesToday * 5), color: 'bg-yellow-500' },
-                  { label: 'Skipped', pct: 100 - stats.avgAdherence, color: 'bg-red-500' },
-                ].map(item => (
-                  <div key={item.label}>
-                    <div className="flex justify-between text-sm mb-1">
-                      <span className="text-muted">{item.label}</span>
-                      <span className="text-white font-medium">{Math.max(0, item.pct)}%</span>
-                    </div>
-                    <div className="h-2 bg-border rounded-full overflow-hidden">
-                      <div className={`h-full ${item.color} rounded-full transition-all duration-700`} style={{ width: `${Math.max(0, item.pct)}%` }} />
+
+            {loading ? (
+              <div className="divide-y divide-border">
+                {Array(5).fill(0).map((_, i) => (
+                  <div key={i} className="px-5 py-3 flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-border animate-pulse" />
+                    <div className="space-y-1.5 flex-1">
+                      <div className="h-3.5 w-36 bg-border rounded animate-pulse" />
+                      <div className="h-3 w-24 bg-border rounded animate-pulse" />
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            ) : recentVisits.length === 0 ? (
+              <div className="text-center py-12 space-y-3">
+                <Users size={28} className="text-muted mx-auto" />
+                <p className="text-muted text-sm">No visits yet</p>
+                <button onClick={() => router.push('/patients/register')}
+                  className="inline-flex items-center gap-2 bg-primary-500 hover:bg-primary-400 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors">
+                  Register First Patient
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {recentVisits.map(v => {
+                  const patient = v.patient as any;
+                  const name = patient?.full_name || patient?.phone || 'Unknown';
+                  const meds = v.visit_prescriptions?.map((r: any) => r.medicine_name).join(', ') || '—';
+                  const todayVisit = isToday(parseISO(v.visit_date));
+                  return (
+                    <div key={v.id} className="flex items-center gap-3 px-5 py-3">
+                      <div className="w-8 h-8 rounded-full bg-primary-900/40 flex items-center justify-center text-primary-400 text-xs font-bold flex-shrink-0">
+                        {name[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium truncate">{name}</p>
+                        <p className="text-muted text-xs truncate">{meds}</p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className={cn('text-xs font-medium', todayVisit ? 'text-primary-400' : 'text-muted')}>
+                          {todayVisit ? 'Today' : format(parseISO(v.visit_date), 'MMM d')}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          <RecentAlertsTable logs={missedLogs} loading={loading} onRefresh={loadStats} />
+          {/* Quick actions */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: 'Register Patient', href: '/patients/register', color: 'bg-primary-500 hover:bg-primary-400' },
+              { label: 'View Patients',    href: '/patients',          color: 'bg-card hover:bg-white/5 border border-border' },
+              { label: 'Medications',      href: '/medications',       color: 'bg-card hover:bg-white/5 border border-border' },
+              { label: 'Appointments',     href: '/appointments',      color: 'bg-card hover:bg-white/5 border border-border' },
+            ].map(a => (
+              <button key={a.href} onClick={() => router.push(a.href)}
+                className={cn('rounded-xl py-3 text-sm font-semibold text-white transition-colors', a.color)}>
+                {a.label}
+              </button>
+            ))}
+          </div>
+
         </div>
       </DashboardLayout>
     </>

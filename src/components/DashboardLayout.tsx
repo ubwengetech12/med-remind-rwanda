@@ -4,17 +4,18 @@ import { useRouter } from 'next/router';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, Users, Pill, Activity, Calendar,
-  MessageSquare, LogOut, Menu, X, ChevronRight
+  MessageSquare, Bell, LogOut, Menu, X, ChevronRight
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
-  { href: '/',              icon: LayoutDashboard, label: 'Overview' },
-  { href: '/patients',      icon: Users,           label: 'Patients' },
-  { href: '/medications',   icon: Pill,            label: 'Medications' },
-  { href: '/monitoring',    icon: Activity,        label: 'Monitoring' },
-  { href: '/appointments',  icon: Calendar,        label: 'Appointments' },
-  { href: '/sms-settings',  icon: MessageSquare,   label: 'SMS Settings' },
+  { href: '/',             icon: LayoutDashboard, label: 'Overview' },
+  { href: '/patients',     icon: Users,           label: 'Patients' },
+  { href: '/medications',  icon: Pill,            label: 'Medications' },
+  { href: '/monitoring',   icon: Activity,        label: 'Monitoring' },
+  { href: '/appointments', icon: Calendar,        label: 'Appointments' },
+  { href: '/sms-viewer',   icon: Bell,            label: 'SMS Reminders' },
+  { href: '/sms-settings', icon: MessageSquare,   label: 'SMS Settings' },
 ];
 
 interface DashboardLayoutProps {
@@ -39,7 +40,6 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
     <div className="min-h-screen bg-gray-950 flex">
       {/* Sidebar */}
       <>
-        {/* Mobile overlay */}
         {sidebarOpen && (
           <div className="fixed inset-0 bg-black/60 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
         )}
@@ -95,7 +95,6 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
 
       {/* Main */}
       <div className="flex-1 lg:ml-64 flex flex-col min-h-screen">
-        {/* Top bar */}
         <header className="sticky top-0 z-30 bg-gray-950/80 backdrop-blur border-b border-border px-5 py-3 flex items-center gap-4">
           <button onClick={() => setSidebarOpen(true)} className="lg:hidden text-muted hover:text-white">
             <Menu size={22} />
@@ -103,7 +102,6 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
           <h1 className="text-white font-semibold text-lg">{title}</h1>
         </header>
 
-        {/* Page content */}
         <main className="flex-1 p-5">
           {children}
         </main>

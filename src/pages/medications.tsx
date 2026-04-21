@@ -1,8 +1,11 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { Plus, Search, X, ChevronRight, Shield, AlertTriangle, CheckCircle, Edit2, Trash2, UserPlus, Clock, Pill } from 'lucide-react';
+import {
+  Plus, Search, X, ChevronRight, Shield, AlertTriangle, Edit2, Trash2,
+  UserPlus, Clock, Pill, Package, Upload, CheckCircle
+} from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
@@ -16,6 +19,11 @@ interface Medication {
 }
 
 interface Patient { id: string; full_name?: string; phone: string; }
+
+interface StockItem {
+  id: string; medicine_name: string; quantity: number; unit: string;
+  expiry_date?: string; medication_id?: string; medication?: { name: string };
+}
 
 const SAFETY_OPTIONS = [
   { value: 'green', label: 'Safe', color: 'text-green-400 bg-green-900/30' },
@@ -43,13 +51,11 @@ const EMPTY_FORM = {
 };
 
 const EMPTY_ASSIGN = {
-  user_id: '',
-  dosage: '',
-  food_instruction: 'with_food',
-  start_date: new Date().toISOString().split('T')[0],
-  end_date: '',
-  notes: '',
+  user_id: '', dosage: '', food_instruction: 'with_food',
+  start_date: new Date().toISOString().split('T')[0], end_date: '', notes: '',
 };
+
+const EMPTY_STOCK = { medicine_name: '', quantity: '', unit: 'tablets', expiry_date: '', medication_id: '' };
 
 function formatTime(time: string): string {
   const [h, m] = time.split(':').map(Number);
@@ -60,6 +66,9 @@ function formatTime(time: string): string {
 
 export default function MedicationsPage() {
   const { user, pharmacy, pharmacist } = useAuthStore();
+  const [tab, setTab] = useState<'medications' | 'stock'>('medications');
+
+  // — Medications state —
   const [meds, setMeds] = useState<Medication[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,7 +85,18 @@ export default function MedicationsPage() {
   const [assigning, setAssigning] = useState(false);
   const [filterSafety, setFilterSafety] = useState<string>('all');
 
+  // — Stock state —
+  const [stock, setStock] = useState<StockItem[]>([]);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockSearch, setStockSearch] = useState('');
+  const [showStockForm, setShowStockForm] = useState(false);
+  const [editingStock, setEditingStock] = useState<StockItem | null>(null);
+  const [stockForm, setStockForm] = useState(EMPTY_STOCK);
+  const [savingStock, setSavingStock] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => { fetchData(); }, []);
+  useEffect(() => { if (tab === 'stock') fetchStock(); }, [tab]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -89,6 +109,116 @@ export default function MedicationsPage() {
     setLoading(false);
   };
 
+  const fetchStock = async () => {
+    setStockLoading(true);
+    const pharmacyId = (pharmacy as any)?.id || user?.id;
+    const { data } = await supabase
+      .from('pharmacy_stock')
+      .select('*, medication:medications(name)')
+      .eq('pharmacy_id', pharmacyId)
+      .order('medicine_name');
+    setStock(data || []);
+    setStockLoading(false);
+  };
+
+  // ── Stock handlers ──────────────────────────────────────────────────────────
+  const openStockCreate = () => { setEditingStock(null); setStockForm(EMPTY_STOCK); setShowStockForm(true); };
+
+  const openStockEdit = (item: StockItem) => {
+    setEditingStock(item);
+    setStockForm({
+      medicine_name: item.medicine_name,
+      quantity: String(item.quantity),
+      unit: item.unit,
+      expiry_date: item.expiry_date || '',
+      medication_id: item.medication_id || '',
+    });
+    setShowStockForm(true);
+  };
+
+  const handleSaveStock = async () => {
+    if (!stockForm.medicine_name.trim() || !stockForm.quantity) {
+      toast.error('Name and quantity required'); return;
+    }
+    setSavingStock(true);
+    try {
+      const pharmacyId = (pharmacy as any)?.id || user?.id;
+      const payload = {
+        pharmacy_id: pharmacyId,
+        medicine_name: stockForm.medicine_name.trim(),
+        quantity: Number(stockForm.quantity),
+        unit: stockForm.unit || 'tablets',
+        expiry_date: stockForm.expiry_date || null,
+        medication_id: stockForm.medication_id || null,
+        updated_at: new Date().toISOString(),
+      };
+      if (editingStock) {
+        const { error } = await supabase.from('pharmacy_stock').update(payload).eq('id', editingStock.id);
+        if (error) throw error;
+        toast.success('Stock updated!');
+      } else {
+        const { error } = await supabase.from('pharmacy_stock').insert(payload);
+        if (error) throw error;
+        toast.success('Added to stock!');
+      }
+      setShowStockForm(false);
+      fetchStock();
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setSavingStock(false);
+    }
+  };
+
+  const handleDeleteStock = async (id: string) => {
+    if (!confirm('Remove from stock?')) return;
+    const { error } = await supabase.from('pharmacy_stock').delete().eq('id', id);
+    if (error) { toast.error(error.message); return; }
+    toast.success('Removed');
+    setStock(s => s.filter(x => x.id !== id));
+  };
+
+  // CSV/file upload
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    const lines = text.split('\n').filter(Boolean);
+    if (lines.length < 2) { toast.error('File must have a header row + data rows'); return; }
+
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+    const nameIdx = headers.findIndex(h => h.includes('name') || h.includes('medicine'));
+    const qtyIdx = headers.findIndex(h => h.includes('qty') || h.includes('quantity'));
+    const unitIdx = headers.findIndex(h => h.includes('unit'));
+    const expiryIdx = headers.findIndex(h => h.includes('expir'));
+
+    if (nameIdx === -1 || qtyIdx === -1) {
+      toast.error('CSV must have "name" and "quantity" columns'); return;
+    }
+
+    const pharmacyId = (pharmacy as any)?.id || user?.id;
+    const rows = lines.slice(1).map(line => {
+      const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
+      return {
+        pharmacy_id: pharmacyId,
+        medicine_name: cols[nameIdx] || '',
+        quantity: Number(cols[qtyIdx]) || 0,
+        unit: unitIdx >= 0 ? cols[unitIdx] || 'tablets' : 'tablets',
+        expiry_date: expiryIdx >= 0 && cols[expiryIdx] ? cols[expiryIdx] : null,
+        updated_at: new Date().toISOString(),
+      };
+    }).filter(r => r.medicine_name);
+
+    if (rows.length === 0) { toast.error('No valid rows found'); return; }
+
+    const { error } = await supabase.from('pharmacy_stock').insert(rows);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`${rows.length} items imported!`);
+    fetchStock();
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // ── Medication handlers (unchanged) ────────────────────────────────────────
   const openEdit = (med: Medication, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditing(med);
@@ -150,26 +280,20 @@ export default function MedicationsPage() {
     }
     setAssigning(true);
     try {
-      // 1. Save to patient_medications
       const { error } = await supabase.from('patient_medications').insert({
-        user_id: assign.user_id,
-        medication_id: assignMed.id,
-        dosage: assign.dosage,
-        schedule_times: times,
+        user_id: assign.user_id, medication_id: assignMed.id,
+        dosage: assign.dosage, schedule_times: times,
         food_instruction: assign.food_instruction,
-        start_date: assign.start_date,
-        end_date: assign.end_date || null,
+        start_date: assign.start_date, end_date: assign.end_date || null,
         days_of_week: ['mon','tue','wed','thu','fri','sat','sun'],
-        is_active: true,
-        notes: assign.notes || null,
+        is_active: true, notes: assign.notes || null,
       });
       if (error) throw error;
 
-      // 2. Schedule SMS for each dose time (5 min before)
       const patient = patients.find(p => p.id === assign.user_id);
       const smsSettings = loadSmsSettings();
-      const pharmacyName = pharmacy?.name || 'MedWise Pharmacy';
-      const supportNumber = pharmacy?.phone || pharmacist?.phone || '';
+      const pharmacyName = (pharmacy as any)?.name || 'MedWise Pharmacy';
+      const supportNumber = (pharmacy as any)?.phone || (pharmacist as any)?.phone || '';
 
       if (patient?.phone) {
         const smsTasks = times.map((time, idx) => {
@@ -178,33 +302,22 @@ export default function MedicationsPage() {
           const sendH = Math.floor(((sendMinutes % 1440) + 1440) % 1440 / 60);
           const sendM = ((sendMinutes % 60) + 60) % 60;
           const sendAt = `${String(sendH).padStart(2,'0')}:${String(sendM).padStart(2,'0')}`;
-
           const message = buildSmsMessage(smsSettings.language, {
             patientName: patient.full_name || patient.phone,
-            pharmacyName,
-            medicineName: assignMed.name + (assign.dosage ? ` ${assign.dosage}` : ''),
-            doseNumber: idx + 1,
-            totalDoses: times.length,
-            exactTime: formatTime(time),
-            supportNumber,
+            pharmacyName, medicineName: assignMed.name + (assign.dosage ? ` ${assign.dosage}` : ''),
+            doseNumber: idx + 1, totalDoses: times.length,
+            exactTime: formatTime(time), supportNumber,
           });
-
           return supabase.from('sms_schedules').insert({
-            user_id: assign.user_id,
-            phone: patient.phone,
-            medication_name: assignMed.name,
-            dose_time: time,
-            send_at: sendAt,
-            message,
-            language: smsSettings.language,
-            status: 'pending',
+            user_id: assign.user_id, phone: patient.phone,
+            medication_name: assignMed.name, dose_time: time,
+            send_at: sendAt, message, language: smsSettings.language, status: 'pending',
           });
         });
-
         await Promise.allSettled(smsTasks);
       }
 
-      toast.success(`${assignMed.name} assigned to ${patient?.full_name || 'patient'} with SMS reminders!`);
+      toast.success(`${assignMed.name} assigned with SMS reminders!`);
       setShowAssign(false);
     } catch (err: any) {
       toast.error(err.message || 'Failed to assign medication');
@@ -227,78 +340,195 @@ export default function MedicationsPage() {
     .filter(m => m.name.toLowerCase().includes(search.toLowerCase()) || (m.category || '').toLowerCase().includes(search.toLowerCase()))
     .filter(m => filterSafety === 'all' || m.safety_level === filterSafety);
 
+  const filteredStock = stock.filter(s =>
+    s.medicine_name.toLowerCase().includes(stockSearch.toLowerCase())
+  );
+
   return (
-    <DashboardLayout title="Medication Database">
+    <DashboardLayout title="Medications">
       <div className="space-y-4">
-        {/* Toolbar */}
-        <div className="flex flex-wrap gap-3">
-          <div className="flex-1 min-w-48 flex items-center gap-2 bg-card border border-border rounded-xl px-3 h-10">
-            <Search size={16} className="text-muted flex-shrink-0" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search medications..."
-              className="flex-1 bg-transparent text-white text-sm outline-none placeholder:text-muted" />
-            {search && <button onClick={() => setSearch('')}><X size={14} className="text-muted" /></button>}
-          </div>
-          <div className="flex gap-2">
-            {['all','green','yellow','red'].map(s => (
-              <button key={s} onClick={() => setFilterSafety(s)}
-                className={cn('px-3 h-10 rounded-xl text-sm font-medium capitalize transition-colors border',
-                  filterSafety === s ? 'bg-primary-500 border-primary-500 text-white' : 'border-border text-muted hover:text-white')}>
-                {s === 'all' ? 'All' : safetyConfig[s]?.label}
+
+        {/* Tabs */}
+        <div className="flex gap-1 bg-card border border-border rounded-xl p-1 w-fit">
+          {[
+            { key: 'medications', label: 'Medication Database', icon: Pill },
+            { key: 'stock', label: 'Pharmacy Stock', icon: Package },
+          ].map(t => {
+            const Icon = t.icon;
+            return (
+              <button key={t.key} onClick={() => setTab(t.key as any)}
+                className={cn('flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
+                  tab === t.key ? 'bg-primary-500 text-white' : 'text-muted hover:text-white')}>
+                <Icon size={15} />{t.label}
               </button>
-            ))}
-          </div>
-          <button onClick={openCreate} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-400 text-white px-4 h-10 rounded-xl text-sm font-semibold transition-colors">
-            <Plus size={16} /> Add Medication
-          </button>
+            );
+          })}
         </div>
 
-        {/* List */}
-        <div className="bg-card border border-border rounded-2xl overflow-hidden">
-          {loading ? (
-            <div className="divide-y divide-border">
-              {Array(6).fill(0).map((_, i) => (
-                <div key={i} className="px-4 py-3 flex items-center gap-3">
-                  <div className="w-6 h-6 rounded bg-border animate-pulse" />
-                  <div className="h-4 w-40 bg-border rounded animate-pulse" />
-                </div>
-              ))}
+        {/* ── MEDICATIONS TAB ── */}
+        {tab === 'medications' && (
+          <>
+            <div className="flex flex-wrap gap-3">
+              <div className="flex-1 min-w-48 flex items-center gap-2 bg-card border border-border rounded-xl px-3 h-10">
+                <Search size={16} className="text-muted flex-shrink-0" />
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search medications..."
+                  className="flex-1 bg-transparent text-white text-sm outline-none placeholder:text-muted" />
+                {search && <button onClick={() => setSearch('')}><X size={14} className="text-muted" /></button>}
+              </div>
+              <div className="flex gap-2">
+                {['all','green','yellow','red'].map(s => (
+                  <button key={s} onClick={() => setFilterSafety(s)}
+                    className={cn('px-3 h-10 rounded-xl text-sm font-medium capitalize transition-colors border',
+                      filterSafety === s ? 'bg-primary-500 border-primary-500 text-white' : 'border-border text-muted hover:text-white')}>
+                    {s === 'all' ? 'All' : safetyConfig[s]?.label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={openCreate} className="flex items-center gap-2 bg-primary-500 hover:bg-primary-400 text-white px-4 h-10 rounded-xl text-sm font-semibold transition-colors">
+                <Plus size={16} /> Add Medication
+              </button>
             </div>
-          ) : filtered.length === 0 ? (
-            <p className="text-center text-muted py-12">No medications found</p>
-          ) : (
-            <div className="divide-y divide-border">
-              {filtered.map(med => {
-                const sc = safetyConfig[med.safety_level];
-                return (
-                  <div key={med.id} onClick={() => setSelected(med)}
-                    className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer">
-                    <span className={cn('text-xs font-medium rounded-lg px-2 py-0.5 flex-shrink-0', sc.className)}>{sc.label}</span>
-                    <span className="flex-1 text-white text-sm font-medium">{med.name}</span>
-                    {med.category && <span className="text-muted text-xs hidden sm:block">{med.category}</span>}
-                    <div className="flex items-center gap-1 ml-2">
-                      <button onClick={e => openAssign(med, e)} title="Assign to patient"
-                        className="p-1.5 text-muted hover:text-primary-400 transition-colors rounded-lg hover:bg-white/5">
-                        <UserPlus size={14} />
-                      </button>
-                      <button onClick={e => openEdit(med, e)}
-                        className="p-1.5 text-muted hover:text-primary-400 transition-colors rounded-lg hover:bg-white/5">
-                        <Edit2 size={14} />
-                      </button>
-                      <button onClick={e => handleDelete(med.id, e)}
-                        className="p-1.5 text-muted hover:text-red-400 transition-colors rounded-lg hover:bg-white/5">
-                        <Trash2 size={14} />
-                      </button>
+
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+              {loading ? (
+                <div className="divide-y divide-border">
+                  {Array(6).fill(0).map((_, i) => (
+                    <div key={i} className="px-4 py-3 flex items-center gap-3">
+                      <div className="w-6 h-6 rounded bg-border animate-pulse" />
+                      <div className="h-4 w-40 bg-border rounded animate-pulse" />
                     </div>
-                    <ChevronRight size={16} className="text-muted flex-shrink-0" />
-                  </div>
-                );
-              })}
+                  ))}
+                </div>
+              ) : filtered.length === 0 ? (
+                <p className="text-center text-muted py-12">No medications found</p>
+              ) : (
+                <div className="divide-y divide-border">
+                  {filtered.map(med => {
+                    const sc = safetyConfig[med.safety_level];
+                    return (
+                      <div key={med.id} onClick={() => setSelected(med)}
+                        className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer">
+                        <span className={cn('text-xs font-medium rounded-lg px-2 py-0.5 flex-shrink-0', sc.className)}>{sc.label}</span>
+                        <span className="flex-1 text-white text-sm font-medium">{med.name}</span>
+                        {med.category && <span className="text-muted text-xs hidden sm:block">{med.category}</span>}
+                        <div className="flex items-center gap-1 ml-2">
+                          <button onClick={e => openAssign(med, e)} title="Assign to patient"
+                            className="p-1.5 text-muted hover:text-primary-400 transition-colors rounded-lg hover:bg-white/5">
+                            <UserPlus size={14} />
+                          </button>
+                          <button onClick={e => openEdit(med, e)}
+                            className="p-1.5 text-muted hover:text-primary-400 transition-colors rounded-lg hover:bg-white/5">
+                            <Edit2 size={14} />
+                          </button>
+                          <button onClick={e => handleDelete(med.id, e)}
+                            className="p-1.5 text-muted hover:text-red-400 transition-colors rounded-lg hover:bg-white/5">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                        <ChevronRight size={16} className="text-muted flex-shrink-0" />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
+
+        {/* ── STOCK TAB ── */}
+        {tab === 'stock' && (
+          <>
+            <div className="flex flex-wrap gap-3">
+              <div className="flex-1 min-w-48 flex items-center gap-2 bg-card border border-border rounded-xl px-3 h-10">
+                <Search size={16} className="text-muted flex-shrink-0" />
+                <input value={stockSearch} onChange={e => setStockSearch(e.target.value)} placeholder="Search stock..."
+                  className="flex-1 bg-transparent text-white text-sm outline-none placeholder:text-muted" />
+                {stockSearch && <button onClick={() => setStockSearch('')}><X size={14} className="text-muted" /></button>}
+              </div>
+              <label className="flex items-center gap-2 border border-border text-muted hover:text-white px-4 h-10 rounded-xl text-sm font-medium transition-colors cursor-pointer">
+                <Upload size={15} /> Import CSV
+                <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
+              </label>
+              <button onClick={openStockCreate}
+                className="flex items-center gap-2 bg-primary-500 hover:bg-primary-400 text-white px-4 h-10 rounded-xl text-sm font-semibold transition-colors">
+                <Plus size={16} /> Add to Stock
+              </button>
+            </div>
+
+            {/* CSV format hint */}
+            <p className="text-muted text-xs">
+              CSV format: <span className="text-white/60">name, quantity, unit, expiry_date</span>
+            </p>
+
+            {/* Stock summary */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-card border border-border rounded-xl p-3 text-center">
+                <p className="text-muted text-xs mb-1">Total Items</p>
+                <p className="text-white font-semibold">{stock.length}</p>
+              </div>
+              <div className="bg-card border border-border rounded-xl p-3 text-center">
+                <p className="text-muted text-xs mb-1">In Stock</p>
+                <p className="text-green-400 font-semibold">{stock.filter(s => s.quantity > 0).length}</p>
+              </div>
+              <div className="bg-card border border-border rounded-xl p-3 text-center">
+                <p className="text-muted text-xs mb-1">Out of Stock</p>
+                <p className="text-red-400 font-semibold">{stock.filter(s => s.quantity === 0).length}</p>
+              </div>
+            </div>
+
+            <div className="bg-card border border-border rounded-2xl overflow-hidden">
+              {stockLoading ? (
+                <div className="divide-y divide-border">
+                  {Array(6).fill(0).map((_, i) => (
+                    <div key={i} className="px-4 py-3 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded bg-border animate-pulse" />
+                      <div className="h-4 w-40 bg-border rounded animate-pulse" />
+                    </div>
+                  ))}
+                </div>
+              ) : filteredStock.length === 0 ? (
+                <div className="text-center py-12 space-y-2">
+                  <Package size={28} className="text-muted mx-auto" />
+                  <p className="text-muted text-sm">No stock items yet</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {filteredStock.map(item => (
+                    <div key={item.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors">
+                      <div className={cn('w-2 h-2 rounded-full flex-shrink-0', item.quantity > 10 ? 'bg-green-400' : item.quantity > 0 ? 'bg-yellow-400' : 'bg-red-400')} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white text-sm font-medium truncate">{item.medicine_name}</p>
+                        <p className="text-muted text-xs">
+                          {item.quantity} {item.unit}
+                          {item.expiry_date && ` · Exp: ${item.expiry_date}`}
+                        </p>
+                      </div>
+                      <span className={cn('text-xs font-semibold px-2 py-0.5 rounded-lg',
+                        item.quantity > 10 ? 'bg-green-900/30 text-green-400' :
+                        item.quantity > 0 ? 'bg-yellow-900/30 text-yellow-400' :
+                        'bg-red-900/30 text-red-400')}>
+                        {item.quantity > 0 ? `${item.quantity} left` : 'Out of stock'}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button onClick={() => openStockEdit(item)}
+                          className="p-1.5 text-muted hover:text-primary-400 transition-colors rounded-lg hover:bg-white/5">
+                          <Edit2 size={14} />
+                        </button>
+                        <button onClick={() => handleDeleteStock(item.id)}
+                          className="p-1.5 text-muted hover:text-red-400 transition-colors rounded-lg hover:bg-white/5">
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Detail Modal */}
+      {/* ── Detail Modal (medications) ── */}
       {selected && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6" onClick={() => setSelected(null)}>
           <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
@@ -374,7 +604,6 @@ export default function MedicationsPage() {
                   </div>
                 </div>
               )}
-              {/* Assign button inside detail modal */}
               <button onClick={e => openAssign(selected, e)}
                 className="w-full flex items-center justify-center gap-2 bg-primary-500 hover:bg-primary-400 text-white rounded-xl h-10 text-sm font-semibold transition-colors">
                 <UserPlus size={16} /> Assign to Patient
@@ -384,42 +613,33 @@ export default function MedicationsPage() {
         </div>
       )}
 
-      {/* Assign Modal */}
+      {/* ── Assign Modal ── */}
       {showAssign && assignMed && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6 overflow-y-auto">
           <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-lg my-4">
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h3 className="text-white text-lg font-semibold">Assign to Patient</h3>
-                <p className="text-primary-400 text-sm mt-0.5 flex items-center gap-1">
-                  <Pill size={13} />{assignMed.name}
-                </p>
+                <p className="text-primary-400 text-sm mt-0.5 flex items-center gap-1"><Pill size={13} />{assignMed.name}</p>
               </div>
               <button onClick={() => setShowAssign(false)} className="text-muted hover:text-white"><X size={20} /></button>
             </div>
-
             <div className="space-y-4">
-              {/* Patient */}
               <div>
                 <label className="block text-muted text-sm mb-1.5">Patient *</label>
-                <select value={assign.user_id} onChange={e => setAssign(a => ({...a, user_id: e.target.value}))}
-                  className="dash-input w-full">
+                <select value={assign.user_id} onChange={e => setAssign(a => ({...a, user_id: e.target.value}))} className="dash-input w-full">
                   <option value="">Select patient...</option>
                   {patients.map(p => <option key={p.id} value={p.id}>{p.full_name || p.phone}</option>)}
                 </select>
               </div>
-
-              {/* Dosage */}
               <div>
                 <label className="block text-muted text-sm mb-1.5">Dosage *</label>
                 <input value={assign.dosage} onChange={e => setAssign(a => ({...a, dosage: e.target.value}))}
                   placeholder="e.g. 500mg, 1 tablet" className="dash-input w-full" />
               </div>
-
-              {/* Dose times */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-muted text-sm">Dose Times * <span className="text-xs">(SMS sent {loadSmsSettings().minutesBefore} min before each)</span></label>
+                  <label className="text-muted text-sm">Dose Times *</label>
                   <button onClick={() => setTimes(t => [...t, '12:00'])}
                     className="text-primary-400 text-xs flex items-center gap-1 hover:text-primary-300">
                     <Plus size={13} /> Add time
@@ -434,59 +654,43 @@ export default function MedicationsPage() {
                           className="flex-1 bg-transparent text-white text-sm outline-none" />
                       </div>
                       {times.length > 1 && (
-                        <button onClick={() => setTimes(ts => ts.filter((_, idx) => idx !== i))}
-                          className="text-red-400 hover:text-red-300 p-2">
-                          <X size={14} />
-                        </button>
+                        <button onClick={() => setTimes(ts => ts.filter((_, idx) => idx !== i))} className="text-red-400 hover:text-red-300 p-2"><X size={14} /></button>
                       )}
                     </div>
                   ))}
                 </div>
               </div>
-
-              {/* Food instruction */}
               <div>
                 <label className="block text-muted text-sm mb-1.5">Food Instruction</label>
                 <div className="grid grid-cols-2 gap-2">
                   {FOOD_OPTIONS.map(opt => (
                     <button key={opt.value} onClick={() => setAssign(a => ({...a, food_instruction: opt.value}))}
                       className={cn('rounded-xl py-2 text-sm font-medium border transition-all',
-                        assign.food_instruction === opt.value
-                          ? 'bg-primary-500/20 border-primary-500 text-primary-300'
-                          : 'bg-surface border-border text-muted hover:text-white')}>
+                        assign.food_instruction === opt.value ? 'bg-primary-500/20 border-primary-500 text-primary-300' : 'bg-surface border-border text-muted hover:text-white')}>
                       {opt.label}
                     </button>
                   ))}
                 </div>
               </div>
-
-              {/* Dates */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-muted text-sm mb-1.5">Start Date</label>
-                  <input type="date" value={assign.start_date} onChange={e => setAssign(a => ({...a, start_date: e.target.value}))}
-                    className="dash-input w-full" />
+                  <input type="date" value={assign.start_date} onChange={e => setAssign(a => ({...a, start_date: e.target.value}))} className="dash-input w-full" />
                 </div>
                 <div>
                   <label className="block text-muted text-sm mb-1.5">End Date</label>
-                  <input type="date" value={assign.end_date} onChange={e => setAssign(a => ({...a, end_date: e.target.value}))}
-                    className="dash-input w-full" />
+                  <input type="date" value={assign.end_date} onChange={e => setAssign(a => ({...a, end_date: e.target.value}))} className="dash-input w-full" />
                 </div>
               </div>
-
-              {/* Notes */}
               <div>
                 <label className="block text-muted text-sm mb-1.5">Notes</label>
                 <textarea value={assign.notes} onChange={e => setAssign(a => ({...a, notes: e.target.value}))}
                   rows={2} className="dash-input w-full resize-none" placeholder="Special instructions..." />
               </div>
-
-              {/* SMS notice */}
               <div className="bg-primary-900/20 border border-primary-900/40 rounded-xl p-3 text-xs text-primary-300">
                 💬 SMS reminders will be scheduled automatically {loadSmsSettings().minutesBefore} min before each dose time.
               </div>
             </div>
-
             <div className="flex gap-3 mt-6">
               <button onClick={() => setShowAssign(false)} className="flex-1 border border-border text-muted rounded-xl h-10 text-sm hover:text-white transition-colors">Cancel</button>
               <button onClick={handleAssign} disabled={assigning}
@@ -498,7 +702,7 @@ export default function MedicationsPage() {
         </div>
       )}
 
-      {/* Add/Edit Modal */}
+      {/* ── Add/Edit Medication Modal ── */}
       {showForm && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6 overflow-y-auto">
           <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-2xl my-4">
@@ -557,6 +761,59 @@ export default function MedicationsPage() {
               <button onClick={handleSave} disabled={saving}
                 className="flex-1 bg-primary-500 text-white rounded-xl h-10 font-semibold text-sm hover:bg-primary-400 transition-colors disabled:opacity-50">
                 {saving ? 'Saving...' : editing ? 'Update Medication' : 'Add Medication'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Add/Edit Stock Modal ── */}
+      {showStockForm && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6">
+          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-white text-lg font-semibold">{editingStock ? 'Update Stock' : 'Add to Stock'}</h3>
+              <button onClick={() => setShowStockForm(false)} className="text-muted hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-muted text-sm mb-1.5">Medicine Name *</label>
+                <input value={stockForm.medicine_name} onChange={e => setStockForm(f => ({...f, medicine_name: e.target.value}))}
+                  placeholder="e.g. Amoxicillin 500mg" className="dash-input w-full" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-muted text-sm mb-1.5">Quantity *</label>
+                  <input type="number" value={stockForm.quantity} onChange={e => setStockForm(f => ({...f, quantity: e.target.value}))}
+                    placeholder="100" className="dash-input w-full" />
+                </div>
+                <div>
+                  <label className="block text-muted text-sm mb-1.5">Unit</label>
+                  <select value={stockForm.unit} onChange={e => setStockForm(f => ({...f, unit: e.target.value}))} className="dash-input w-full">
+                    {['tablets','capsules','ml','mg','vials','sachets','bottles','units'].map(u => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-muted text-sm mb-1.5">Expiry Date</label>
+                <input type="date" value={stockForm.expiry_date} onChange={e => setStockForm(f => ({...f, expiry_date: e.target.value}))}
+                  className="dash-input w-full" />
+              </div>
+              <div>
+                <label className="block text-muted text-sm mb-1.5">Link to Medication (optional)</label>
+                <select value={stockForm.medication_id} onChange={e => setStockForm(f => ({...f, medication_id: e.target.value}))} className="dash-input w-full">
+                  <option value="">-- None --</option>
+                  {meds.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button onClick={() => setShowStockForm(false)} className="flex-1 border border-border text-muted rounded-xl h-10 text-sm hover:text-white transition-colors">Cancel</button>
+              <button onClick={handleSaveStock} disabled={savingStock}
+                className="flex-1 bg-primary-500 text-white rounded-xl h-10 font-semibold text-sm hover:bg-primary-400 transition-colors disabled:opacity-50">
+                {savingStock ? 'Saving...' : editingStock ? 'Update' : 'Add to Stock'}
               </button>
             </div>
           </div>
