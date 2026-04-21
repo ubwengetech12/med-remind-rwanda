@@ -1,14 +1,12 @@
 'use client';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, ArrowRight, RefreshCw, Eye, EyeOff, Building2, User, Phone, CreditCard, Mail } from 'lucide-react';
+import { Lock, ArrowRight, RefreshCw, Eye, EyeOff, Building2, User, Phone, CreditCard } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { useRouter } from 'next/router';
 import toast from 'react-hot-toast';
 
 type Mode = 'login' | 'setup';
-
-const LOCAL_PHARMACY_ID = 'local-pharmacy-001';
 
 function InputField({ label, icon, value, onChange, placeholder, type = 'text', onEnter }: {
   label: string; icon: React.ReactNode; value: string;
@@ -64,11 +62,12 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>('login');
   const [loading, setLoadingLocal] = useState(false);
 
-  const [loginEmail, setLoginEmail] = useState('');
+  // Login fields — job card + password
+  const [loginJobCard, setLoginJobCard] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
+  // Setup fields
   const [pharmacyName, setPharmacyName] = useState('');
-  const [pharmacyEmail, setPharmacyEmail] = useState('');
   const [pharmacyPhone, setPharmacyPhone] = useState('');
   const [pharmacyPassword, setPharmacyPassword] = useState('');
   const [pharmacistName, setPharmacistName] = useState('');
@@ -76,21 +75,29 @@ export default function LoginPage() {
   const [jobCardNumber, setJobCardNumber] = useState('');
 
   const handleLogin = async () => {
-    if (!loginEmail || !loginPassword) { toast.error('Enter email and password'); return; }
+    if (!loginJobCard || !loginPassword) { toast.error('Enter job card number and password'); return; }
     if (!pharmacy?.is_setup_complete) {
       toast.error('No pharmacy account found. Please set up first.');
       setMode('setup'); return;
     }
     setLoadingLocal(true);
     await new Promise(r => setTimeout(r, 400));
+
     if (
-      loginEmail.trim().toLowerCase() !== pharmacy.email.toLowerCase() ||
+      loginJobCard.trim().toLowerCase() !== pharmacist?.job_card_number?.toLowerCase() ||
       loginPassword !== pharmacy.password
     ) {
-      toast.error('Wrong email or password');
+      toast.error('Wrong job card number or password');
       setLoadingLocal(false); return;
     }
-    setUser({ id: LOCAL_PHARMACY_ID, phone: pharmacy.phone, role: 'pharmacist', full_name: pharmacist?.name || pharmacy.name });
+
+    // user.id = job card number — stable, used as pharmacy_id in Supabase
+    setUser({
+      id: pharmacist!.job_card_number,
+      phone: pharmacy.phone,
+      role: 'pharmacist',
+      full_name: pharmacist?.name || pharmacy.name,
+    });
     setLoading(false);
     toast.success(`Welcome back, ${pharmacist?.name || pharmacy.name}!`);
     router.replace('/');
@@ -98,15 +105,32 @@ export default function LoginPage() {
   };
 
   const handleSetup = async () => {
-    if (!pharmacyName || !pharmacyEmail || !pharmacyPhone || !pharmacyPassword || !pharmacistName || !pharmacistPhone || !jobCardNumber) {
+    if (!pharmacyName || !pharmacyPhone || !pharmacyPassword || !pharmacistName || !pharmacistPhone || !jobCardNumber) {
       toast.error('All fields are required'); return;
     }
     if (pharmacyPassword.length < 6) { toast.error('Password must be at least 6 characters'); return; }
     setLoadingLocal(true);
     await new Promise(r => setTimeout(r, 400));
-    setPharmacy({ name: pharmacyName, email: pharmacyEmail.trim().toLowerCase(), phone: pharmacyPhone, password: pharmacyPassword, is_setup_complete: true });
-    setPharmacist({ name: pharmacistName, phone: pharmacistPhone, job_card_number: jobCardNumber });
-    setUser({ id: LOCAL_PHARMACY_ID, phone: pharmacyPhone, role: 'pharmacist', full_name: pharmacistName });
+
+    setPharmacy({
+      name: pharmacyName,
+      email: '',
+      phone: pharmacyPhone,
+      password: pharmacyPassword,
+      is_setup_complete: true,
+    });
+    setPharmacist({
+      name: pharmacistName,
+      phone: pharmacistPhone,
+      job_card_number: jobCardNumber.trim(),
+    });
+    // user.id = job card number — this becomes pharmacy_id for all Supabase records
+    setUser({
+      id: jobCardNumber.trim(),
+      phone: pharmacyPhone,
+      role: 'pharmacist',
+      full_name: pharmacistName,
+    });
     setLoading(false);
     toast.success('Pharmacy account created!');
     router.replace('/');
@@ -155,9 +179,20 @@ export default function LoginPage() {
                   {pharmacy?.is_setup_complete ? pharmacy.name : 'Pharmacist access only'}
                 </p>
                 <div className="space-y-4 mb-6">
-                  <InputField label="Email" icon={<Mail size={16} />} value={loginEmail}
-                    onChange={setLoginEmail} placeholder="your@email.com" type="email" onEnter={handleLogin} />
-                  <PasswordField label="Password" value={loginPassword} onChange={setLoginPassword} onEnter={handleLogin} />
+                  <InputField
+                    label="Job Card Number"
+                    icon={<CreditCard size={16} />}
+                    value={loginJobCard}
+                    onChange={setLoginJobCard}
+                    placeholder="JC-2024-0001"
+                    onEnter={handleLogin}
+                  />
+                  <PasswordField
+                    label="Password"
+                    value={loginPassword}
+                    onChange={setLoginPassword}
+                    onEnter={handleLogin}
+                  />
                 </div>
                 <button onClick={handleLogin} disabled={loading}
                   className="w-full bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-12 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors mb-4">
@@ -176,16 +211,16 @@ export default function LoginPage() {
             ) : (
               <motion.div key="setup" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}>
                 <h2 className="text-white text-2xl font-bold mb-1">Setup Pharmacy</h2>
-                <p className="text-muted text-sm mb-6">One-time registration — you'll use this email & password every day</p>
+                <p className="text-muted text-sm mb-6">
+                  One-time setup — you'll use your job card number & password to sign in every day
+                </p>
 
                 <div className="space-y-3 mb-4">
                   <p className="text-primary-400 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
                     <Building2 size={12} /> Pharmacy Info
                   </p>
-                  <InputField label="Pharmacy Name" icon={<Building2 size={15} />} value={pharmacyName}
+                  <InputField label="Pharmacy / Clinic Name" icon={<Building2 size={15} />} value={pharmacyName}
                     onChange={setPharmacyName} placeholder="Vision Pharmacy" />
-                  <InputField label="Email" icon={<Mail size={15} />} value={pharmacyEmail}
-                    onChange={setPharmacyEmail} placeholder="vision@pharmacy.com" type="email" />
                   <InputField label="Phone Number" icon={<Phone size={15} />} value={pharmacyPhone}
                     onChange={setPharmacyPhone} placeholder="+250 788 000 000" />
                   <PasswordField label="Password (used every day)" value={pharmacyPassword} onChange={setPharmacyPassword} />

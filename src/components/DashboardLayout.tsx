@@ -4,18 +4,19 @@ import { useRouter } from 'next/router';
 import { useAuthStore } from '@/store/authStore';
 import {
   LayoutDashboard, Users, Pill, Activity, Calendar,
-  MessageSquare, Bell, LogOut, Menu, X, ChevronRight
+  MessageSquare, Bell, LogOut, Menu, X, ChevronRight, Building2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
-  { href: '/',             icon: LayoutDashboard, label: 'Overview' },
-  { href: '/patients',     icon: Users,           label: 'Patients' },
-  { href: '/medications',  icon: Pill,            label: 'Medications' },
-  { href: '/monitoring',   icon: Activity,        label: 'Monitoring' },
-  { href: '/appointments', icon: Calendar,        label: 'Appointments' },
-  { href: '/sms-viewer',   icon: Bell,            label: 'SMS Reminders' },
-  { href: '/sms-settings', icon: MessageSquare,   label: 'SMS Settings' },
+  { href: '/',                      icon: LayoutDashboard, label: 'Overview' },
+  { href: '/patients',              icon: Users,           label: 'Patients' },
+  { href: '/medications',           icon: Pill,            label: 'Medications' },
+  { href: '/monitoring',            icon: Activity,        label: 'Monitoring' },
+  { href: '/appointments',          icon: Calendar,        label: 'Appointments' },
+  { href: '/hospital-prescription', icon: Building2,       label: 'Hospital Rx' },
+  { href: '/sms-viewer',            icon: Bell,            label: 'SMS Reminders' },
+  { href: '/sms-settings',          icon: MessageSquare,   label: 'SMS Settings' },
 ];
 
 interface DashboardLayoutProps {
@@ -38,7 +39,6 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
 
   return (
     <div className="min-h-screen bg-gray-950 flex">
-      {/* Sidebar */}
       <>
         {sidebarOpen && (
           <div className="fixed inset-0 bg-black/60 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
@@ -48,7 +48,6 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
           'fixed top-0 left-0 h-full w-64 bg-gray-900 border-r border-border z-50 flex flex-col transition-transform duration-200',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         )}>
-          {/* Logo */}
           <div className="flex items-center gap-3 px-5 py-5 border-b border-border">
             <div className="w-9 h-9 bg-primary-500/10 rounded-xl flex items-center justify-center flex-shrink-0">
               <span className="text-lg">💊</span>
@@ -62,7 +61,6 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
             </button>
           </div>
 
-          {/* Nav */}
           <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
             {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
               const active = router.pathname === href;
@@ -82,7 +80,6 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
             })}
           </nav>
 
-          {/* Sign out */}
           <div className="px-3 py-4 border-t border-border">
             <button onClick={handleSignOut}
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted hover:text-red-400 hover:bg-red-900/10 transition-all">
@@ -93,7 +90,6 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
         </aside>
       </>
 
-      {/* Main */}
       <div className="flex-1 lg:ml-64 flex flex-col min-h-screen">
         <header className="sticky top-0 z-30 bg-gray-950/80 backdrop-blur border-b border-border px-5 py-3 flex items-center gap-4">
           <button onClick={() => setSidebarOpen(true)} className="lg:hidden text-muted hover:text-white">

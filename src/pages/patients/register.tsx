@@ -13,45 +13,70 @@ import {
   Calendar, Plus, X, ChevronRight, ChevronLeft, Check
 } from 'lucide-react';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 interface Step1 {
   full_name: string; id_number: string; phone: string;
-  village: string; cell: string; sector: string; district: string; insurance: string;
+  village: string; cell: string; sector: string; district: string;
+  insurance: string; language: string;
 }
 interface Step2 { patient_says: string; doctor_found: string; }
 interface Step3 { has_test: boolean; test_name: string; test_notes: string; }
-interface PrescriptionRow { medicine_name: string; type: 'medicine' | 'vaccine'; dosage: string; times_per_day: string; schedule_times: string[]; duration_days: string; from_stock: boolean; stock_id: string; }
+interface PrescriptionRow {
+  medicine_name: string; type: 'medicine' | 'vaccine'; dosage: string;
+  times_per_day: string; schedule_times: string[]; duration_days: string;
+  from_stock: boolean; stock_id: string;
+  food_instruction: 'before_food' | 'after_food' | 'with_food' | 'empty_stomach';
+}
 interface AppointmentRow { appointment_date: string; appointment_time: string; notes: string; }
 
-const EMPTY_STEP1: Step1 = { full_name: '', id_number: '', phone: '', village: '', cell: '', sector: '', district: '', insurance: '' };
+const EMPTY_STEP1: Step1 = {
+  full_name: '', id_number: '', phone: '', village: '', cell: '',
+  sector: '', district: '', insurance: '', language: 'english',
+};
 const EMPTY_STEP2: Step2 = { patient_says: '', doctor_found: '' };
 const EMPTY_STEP3: Step3 = { has_test: false, test_name: '', test_notes: '' };
-const EMPTY_RX: PrescriptionRow = { medicine_name: '', type: 'medicine', dosage: '', times_per_day: '1', schedule_times: ['08:00'], duration_days: '', from_stock: false, stock_id: '' };
+const EMPTY_RX: PrescriptionRow = {
+  medicine_name: '', type: 'medicine', dosage: '', times_per_day: '1',
+  schedule_times: ['08:00'], duration_days: '', from_stock: false, stock_id: '',
+  food_instruction: 'with_food',
+};
 const EMPTY_APPT: AppointmentRow = { appointment_date: '', appointment_time: '', notes: '' };
 
 const STEPS = [
-  { label: 'Patient Info',   icon: User },
-  { label: 'Diseases',       icon: Activity },
-  { label: 'Tests',          icon: FlaskConical },
-  { label: 'Prescriptions',  icon: Pill },
-  { label: 'Avoidances',     icon: AlertTriangle },
-  { label: 'Appointments',   icon: Calendar },
+  { label: 'Patient Info',  icon: User },
+  { label: 'Diseases',      icon: Activity },
+  { label: 'Tests',         icon: FlaskConical },
+  { label: 'Prescriptions', icon: Pill },
+  { label: 'Avoidances',    icon: AlertTriangle },
+  { label: 'Appointments',  icon: Calendar },
 ];
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const FOOD_OPTIONS = [
+  { value: 'before_food',   label: 'Before Food' },
+  { value: 'after_food',    label: 'After Food' },
+  { value: 'with_food',     label: 'With Food' },
+  { value: 'empty_stomach', label: 'Empty Stomach' },
+];
+
+const LANGUAGE_OPTIONS = [
+  { value: 'english',    label: 'English' },
+  { value: 'kinyarwanda', label: 'Kinyarwanda' },
+  { value: 'french',     label: 'French' },
+  { value: 'swahili',    label: 'Swahili' },
+];
+
 function formatTime(t: string) {
   const [h, m] = t.split(':').map(Number);
   return `${h === 0 ? 12 : h > 12 ? h - 12 : h}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Component ──────────────────────────────────────────────────────────────────
 export default function RegisterPatientPage() {
   const router = useRouter();
   const { user, pharmacy, pharmacist } = useAuthStore() as any;
 
   const [step, setStep]           = useState(0);
   const [saving, setSaving]       = useState(false);
-
   const [s1, setS1]               = useState<Step1>(EMPTY_STEP1);
   const [s2, setS2]               = useState<Step2>(EMPTY_STEP2);
   const [s3, setS3]               = useState<Step3>(EMPTY_STEP3);
@@ -61,29 +86,31 @@ export default function RegisterPatientPage() {
   const [stock, setStock]         = useState<any[]>([]);
   const [stockLoaded, setStockLoaded] = useState(false);
 
-  // Load stock once when step 4 opens
+  // ── FIX: pharmacy_id uses user.id (persisted) since pharmacy object has no id ──
+  const pharmacyId = user?.id || 'unknown';
+
   const loadStock = async () => {
     if (stockLoaded) return;
-    const pharmacyId = pharmacy?.id || user?.id;
-    const { data } = await supabase.from('pharmacy_stock').select('*, medication:medications(name)').eq('pharmacy_id', pharmacyId).gt('quantity', 0);
+    const { data } = await supabase
+      .from('pharmacy_stock')
+      .select('*, medication:medications(name)')
+      .eq('pharmacy_id', pharmacyId)
+      .gt('quantity', 0);
     setStock(data || []);
     setStockLoaded(true);
   };
 
-  // ── Validation ──────────────────────────────────────────────────────────────
   const canNext = () => {
     if (step === 0) return s1.full_name.trim() && s1.phone.trim();
     if (step === 1) return s2.patient_says.trim() || s2.doctor_found.trim();
     return true;
   };
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
+  // ── Submit ────────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      const pharmacyId = pharmacy?.id || user?.id;
-
-      // 1. Upsert patient in users table
+      // 1. Upsert patient
       const { data: patientData, error: uErr } = await supabase
         .from('users')
         .upsert({
@@ -103,10 +130,10 @@ export default function RegisterPatientPage() {
       if (uErr) throw uErr;
       const patientId = patientData.id;
 
-      // 2. Create visit
+      // 2. Create visit — use pharmacyId (user.id)
       const { data: visitData, error: vErr } = await supabase
         .from('patient_visits')
-        .insert({ patient_id: patientId, pharmacy_id: pharmacyId })
+        .insert({ patient_id: patientId, pharmacy_id: pharmacyId, status: 'active' })
         .select()
         .single();
       if (vErr) throw vErr;
@@ -129,7 +156,7 @@ export default function RegisterPatientPage() {
         });
       }
 
-      // 5. Prescriptions
+      // 5. Prescriptions + stock deduction
       const validRx = rxList.filter(r => r.medicine_name.trim());
       if (validRx.length > 0) {
         await supabase.from('visit_prescriptions').insert(
@@ -141,10 +168,10 @@ export default function RegisterPatientPage() {
             times_per_day: Number(r.times_per_day) || 1,
             schedule_times: r.schedule_times,
             duration_days: r.duration_days ? Number(r.duration_days) : null,
+            food_instruction: r.food_instruction,
           }))
         );
 
-        // Deduct stock if selected from stock
         for (const r of validRx) {
           if (r.from_stock && r.stock_id) {
             const item = stock.find(s => s.id === r.stock_id);
@@ -156,19 +183,20 @@ export default function RegisterPatientPage() {
           }
         }
 
-        // 6. Schedule SMS for each prescription
+        // 6. Schedule SMS per prescription — use patient's chosen language
         const smsSettings = loadSmsSettings();
         const pharmacyName = pharmacy?.name || 'MedWise Pharmacy';
         const supportNumber = pharmacy?.phone || pharmacist?.phone || '';
+        const patientLang = s1.language || smsSettings.language;
 
-        const smsTasks = validRx.flatMap((r, rIdx) =>
+        const smsTasks = validRx.flatMap((r, _rIdx) =>
           r.schedule_times.map((time, tIdx) => {
             const [h, m] = time.split(':').map(Number);
             const sendMin = h * 60 + m - smsSettings.minutesBefore;
             const sH = Math.floor(((sendMin % 1440) + 1440) % 1440 / 60);
             const sM = ((sendMin % 60) + 60) % 60;
-            const sendAt = `${String(sH).padStart(2,'0')}:${String(sM).padStart(2,'0')}`;
-            const message = buildSmsMessage(smsSettings.language, {
+            const sendAt = `${String(sH).padStart(2, '0')}:${String(sM).padStart(2, '0')}`;
+            const message = buildSmsMessage(patientLang, {
               patientName: s1.full_name,
               pharmacyName,
               medicineName: r.medicine_name + (r.dosage ? ` ${r.dosage}` : ''),
@@ -184,7 +212,7 @@ export default function RegisterPatientPage() {
               dose_time: time,
               send_at: sendAt,
               message,
-              language: smsSettings.language,
+              language: patientLang,
               status: 'pending',
             });
           })
@@ -222,22 +250,23 @@ export default function RegisterPatientPage() {
     }
   };
 
-  // ── Step renders ─────────────────────────────────────────────────────────────
+  // ── Step renders ──────────────────────────────────────────────────────────────
   const renderStep = () => {
     switch (step) {
-      // STEP 1 — Patient Info
+
+      // STEP 1 — Patient Info + Language
       case 0: return (
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {[
               { label: 'Full Name *', key: 'full_name', placeholder: 'Jean Baptiste' },
-              { label: 'Phone *', key: 'phone', placeholder: '+250 7XX XXX XXX' },
-              { label: 'ID Number', key: 'id_number', placeholder: '1 XXXX X XXXXXXX X XX' },
-              { label: 'Insurance', key: 'insurance', placeholder: 'RAMA / MMI / None' },
-              { label: 'Village', key: 'village', placeholder: 'Kimisagara' },
-              { label: 'Cell', key: 'cell', placeholder: 'Biryogo' },
-              { label: 'Sector', key: 'sector', placeholder: 'Nyarugenge' },
-              { label: 'District', key: 'district', placeholder: 'Kigali' },
+              { label: 'Phone *',     key: 'phone',     placeholder: '+250 7XX XXX XXX' },
+              { label: 'ID Number',   key: 'id_number', placeholder: '1 XXXX X XXXXXXX X XX' },
+              { label: 'Insurance',   key: 'insurance', placeholder: 'RAMA / MMI / None' },
+              { label: 'Village',     key: 'village',   placeholder: 'Kimisagara' },
+              { label: 'Cell',        key: 'cell',      placeholder: 'Biryogo' },
+              { label: 'Sector',      key: 'sector',    placeholder: 'Nyarugenge' },
+              { label: 'District',    key: 'district',  placeholder: 'Kigali' },
             ].map(f => (
               <div key={f.key}>
                 <label className="block text-muted text-sm mb-1.5">{f.label}</label>
@@ -250,6 +279,23 @@ export default function RegisterPatientPage() {
               </div>
             ))}
           </div>
+
+          {/* SMS Language */}
+          <div>
+            <label className="block text-muted text-sm mb-1.5">SMS Language</label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {LANGUAGE_OPTIONS.map(l => (
+                <button key={l.value} onClick={() => setS1(p => ({ ...p, language: l.value }))}
+                  className={cn('py-2 rounded-xl text-sm font-medium border transition-all',
+                    s1.language === l.value
+                      ? 'bg-primary-500/20 border-primary-500 text-primary-300'
+                      : 'border-border text-muted hover:text-white')}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-muted text-xs mt-1.5">Patient will receive SMS reminders in this language</p>
+          </div>
         </div>
       );
 
@@ -258,21 +304,13 @@ export default function RegisterPatientPage() {
         <div className="space-y-4">
           <div>
             <label className="block text-muted text-sm mb-1.5">Diseases said by patient</label>
-            <textarea
-              value={s2.patient_says}
-              onChange={e => setS2(p => ({ ...p, patient_says: e.target.value }))}
-              rows={3} className="dash-input w-full resize-none"
-              placeholder="What the patient reports feeling..."
-            />
+            <textarea value={s2.patient_says} onChange={e => setS2(p => ({ ...p, patient_says: e.target.value }))}
+              rows={3} className="dash-input w-full resize-none" placeholder="What the patient reports feeling..." />
           </div>
           <div>
-            <label className="block text-muted text-sm mb-1.5">Diseases found by doctor</label>
-            <textarea
-              value={s2.doctor_found}
-              onChange={e => setS2(p => ({ ...p, doctor_found: e.target.value }))}
-              rows={3} className="dash-input w-full resize-none"
-              placeholder="Diagnosis after examination..."
-            />
+            <label className="block text-muted text-sm mb-1.5">Diseases found by doctor (after tests)</label>
+            <textarea value={s2.doctor_found} onChange={e => setS2(p => ({ ...p, doctor_found: e.target.value }))}
+              rows={3} className="dash-input w-full resize-none" placeholder="Diagnosis after examination and test results..." />
           </div>
         </div>
       );
@@ -281,8 +319,7 @@ export default function RegisterPatientPage() {
       case 2: return (
         <div className="space-y-4">
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setS3(p => ({ ...p, has_test: !p.has_test }))}
+            <button onClick={() => setS3(p => ({ ...p, has_test: !p.has_test }))}
               className={cn('w-12 h-6 rounded-full transition-colors relative flex-shrink-0',
                 s3.has_test ? 'bg-primary-500' : 'bg-gray-700')}>
               <span className={cn('absolute top-1 w-4 h-4 bg-white rounded-full transition-all',
@@ -325,7 +362,7 @@ export default function RegisterPatientPage() {
                 )}
               </div>
 
-              {/* Type toggle */}
+              {/* Type */}
               <div className="flex gap-2">
                 {(['medicine', 'vaccine'] as const).map(t => (
                   <button key={t} onClick={() => setRxList(l => l.map((r, idx) => idx === i ? { ...r, type: t } : r))}
@@ -348,8 +385,7 @@ export default function RegisterPatientPage() {
               {rx.from_stock ? (
                 <div>
                   <label className="block text-muted text-sm mb-1.5">Select from Stock</label>
-                  <select
-                    value={rx.stock_id}
+                  <select value={rx.stock_id}
                     onChange={e => {
                       const item = stock.find(s => s.id === e.target.value);
                       setRxList(l => l.map((r, idx) => idx === i ? { ...r, stock_id: e.target.value, medicine_name: item?.medicine_name || item?.medication?.name || '' } : r));
@@ -364,7 +400,8 @@ export default function RegisterPatientPage() {
               ) : (
                 <div>
                   <label className="block text-muted text-sm mb-1.5">Medicine / Vaccine Name</label>
-                  <input value={rx.medicine_name} onChange={e => setRxList(l => l.map((r, idx) => idx === i ? { ...r, medicine_name: e.target.value } : r))}
+                  <input value={rx.medicine_name}
+                    onChange={e => setRxList(l => l.map((r, idx) => idx === i ? { ...r, medicine_name: e.target.value } : r))}
                     placeholder="e.g. Amoxicillin, Paracetamol..." className="dash-input w-full" />
                 </div>
               )}
@@ -372,20 +409,39 @@ export default function RegisterPatientPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-muted text-sm mb-1.5">Dosage</label>
-                  <input value={rx.dosage} onChange={e => setRxList(l => l.map((r, idx) => idx === i ? { ...r, dosage: e.target.value } : r))}
+                  <input value={rx.dosage}
+                    onChange={e => setRxList(l => l.map((r, idx) => idx === i ? { ...r, dosage: e.target.value } : r))}
                     placeholder="e.g. 500mg" className="dash-input w-full" />
                 </div>
                 <div>
                   <label className="block text-muted text-sm mb-1.5">Duration (days)</label>
-                  <input type="number" value={rx.duration_days} onChange={e => setRxList(l => l.map((r, idx) => idx === i ? { ...r, duration_days: e.target.value } : r))}
+                  <input type="number" value={rx.duration_days}
+                    onChange={e => setRxList(l => l.map((r, idx) => idx === i ? { ...r, duration_days: e.target.value } : r))}
                     placeholder="7" className="dash-input w-full" />
+                </div>
+              </div>
+
+              {/* Food / Water condition */}
+              <div>
+                <label className="block text-muted text-sm mb-1.5">Take with food / water</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {FOOD_OPTIONS.map(opt => (
+                    <button key={opt.value}
+                      onClick={() => setRxList(l => l.map((r, idx) => idx === i ? { ...r, food_instruction: opt.value as any } : r))}
+                      className={cn('py-2 rounded-xl text-sm font-medium border transition-all',
+                        rx.food_instruction === opt.value
+                          ? 'bg-primary-500/20 border-primary-500 text-primary-300'
+                          : 'border-border text-muted hover:text-white')}>
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
               {/* Times */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-muted text-sm">Times to take per day</label>
+                  <label className="text-muted text-sm">Times per day</label>
                   <button onClick={() => setRxList(l => l.map((r, idx) => idx === i ? { ...r, schedule_times: [...r.schedule_times, '08:00'] } : r))}
                     className="text-primary-400 text-xs hover:text-primary-300 flex items-center gap-1">
                     <Plus size={12} /> Add time
@@ -422,7 +478,7 @@ export default function RegisterPatientPage() {
           {avoidList.map((a, i) => (
             <div key={i} className="flex items-center gap-2">
               <input value={a} onChange={e => setAvoidList(l => l.map((x, idx) => idx === i ? e.target.value : x))}
-                placeholder={`e.g. Avoid alcohol, Do not drive...`} className="dash-input flex-1" />
+                placeholder="e.g. Avoid alcohol, Do not drive..." className="dash-input flex-1" />
               {avoidList.length > 1 && (
                 <button onClick={() => setAvoidList(l => l.filter((_, idx) => idx !== i))}
                   className="text-red-400 hover:text-red-300 p-1.5"><X size={14} /></button>
@@ -527,7 +583,14 @@ export default function RegisterPatientPage() {
             </button>
           )}
           <button
-            onClick={isLastStep ? handleSubmit : () => { if (canNext() || step > 1) { if (step === 3) loadStock(); setStep(s => s + 1); } else toast.error('Please fill required fields'); }}
+            onClick={isLastStep ? handleSubmit : () => {
+              if (canNext() || step > 1) {
+                if (step === 3) loadStock();
+                setStep(s => s + 1);
+              } else {
+                toast.error('Please fill required fields');
+              }
+            }}
             disabled={saving}
             className="flex-1 bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-11 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors">
             {saving ? 'Saving...' : isLastStep ? <><Check size={16} /> Complete Registration</> : <>Next <ChevronRight size={16} /></>}
