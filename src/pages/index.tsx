@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Head from 'next/head';
 import { useRouter } from 'next/router';
 import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/store/authStore';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { StatCard } from '@/components/StatCard';
 import { Users, Pill, Calendar, Package, MessageSquare, Activity } from 'lucide-react';
@@ -18,6 +19,7 @@ interface RecentVisit {
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { user } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({
     totalPatients: 0,
@@ -34,17 +36,49 @@ export default function DashboardPage() {
   const loadStats = async () => {
     setLoading(true);
     try {
+      const pharmacyId = user?.id;
       const today = new Date().toISOString().split('T')[0];
 
+      // Step 1: get patient IDs belonging to this pharmacy
+      const { data: visitRows } = await supabase
+        .from('patient_visits')
+        .select('patient_id')
+        .eq('pharmacy_id', pharmacyId);
+
+      const patientIds = Array.from(
+        new Set((visitRows || []).map(v => v.patient_id).filter(Boolean))
+      );
+
+      // Step 2: load all stats in parallel, filtered by this pharmacy
       const [patients, medications, visits, stock, sms, appts, recent] = await Promise.all([
-        supabase.from('users').select('id', { count: 'exact' }).eq('role', 'patient'),
+        // patients registered under this pharmacy
+        patientIds.length > 0
+          ? supabase.from('users').select('id', { count: 'exact' }).eq('role', 'patient').in('id', patientIds)
+          : Promise.resolve({ count: 0 }),
+
+        // medications — global list
         supabase.from('medications').select('id', { count: 'exact' }),
-        supabase.from('patient_visits').select('id', { count: 'exact' }),
-        supabase.from('pharmacy_stock').select('id', { count: 'exact' }).gt('quantity', 0),
-        supabase.from('sms_schedules').select('id', { count: 'exact' }).eq('status', 'pending'),
-        supabase.from('visit_appointments').select('id', { count: 'exact' }).eq('appointment_date', today),
+
+        // visits for this pharmacy only
+        supabase.from('patient_visits').select('id', { count: 'exact' }).eq('pharmacy_id', pharmacyId),
+
+        // stock for this pharmacy only
+        supabase.from('pharmacy_stock').select('id', { count: 'exact' }).eq('pharmacy_id', pharmacyId).gt('quantity', 0),
+
+        // sms for this pharmacy's patients only
+        patientIds.length > 0
+          ? supabase.from('sms_schedules').select('id', { count: 'exact' }).eq('status', 'pending').in('user_id', patientIds)
+          : Promise.resolve({ count: 0 }),
+
+        // appointments today for this pharmacy's patients
+        patientIds.length > 0
+          ? supabase.from('visit_appointments').select('id', { count: 'exact' }).eq('appointment_date', today)
+          : Promise.resolve({ count: 0 }),
+
+        // recent visits for this pharmacy
         supabase.from('patient_visits')
           .select('id, visit_date, patient:users(full_name, phone), visit_prescriptions(medicine_name)')
+          .eq('pharmacy_id', pharmacyId)
           .order('visit_date', { ascending: false })
           .limit(5),
       ]);
@@ -68,14 +102,14 @@ export default function DashboardPage() {
   return (
     <>
       <Head>
-        <title>MedWise — Dashboard</title>
+        <title>MedWise – Dashboard</title>
       </Head>
       <DashboardLayout title="Overview">
         <div className="space-y-6">
 
           {/* Stats */}
           <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-            <StatCard label="Total Patients"   value={stats.totalPatients}    icon={<Users size={20} />}         color="blue"   loading={loading} />
+            <StatCard label="Total Patients"   value={stats.totalPatients}     icon={<Users size={20} />}         color="blue"   loading={loading} />
             <StatCard label="Medications"      value={stats.totalMedications}  icon={<Pill size={20} />}          color="green"  loading={loading} />
             <StatCard label="Total Visits"     value={stats.totalVisits}       icon={<Activity size={20} />}      color="purple" loading={loading} />
             <StatCard label="Appts Today"      value={stats.appointmentsToday} icon={<Calendar size={20} />}      color="yellow" loading={loading} urgent={stats.appointmentsToday > 0} />

@@ -52,7 +52,7 @@ export default function PatientsPage() {
       .select('patient_id')
       .eq('pharmacy_id', user?.id);
 
-    const patientIds = [...new Set((visits || []).map(v => v.patient_id).filter(Boolean))];
+    const patientIds = Array.from(new Set((visits || []).map(v => v.patient_id).filter(Boolean)));
 
     if (patientIds.length === 0) {
       setPatients([]);
