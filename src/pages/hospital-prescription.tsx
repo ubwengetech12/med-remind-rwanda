@@ -69,18 +69,31 @@ export default function HospitalPrescriptionPage() {
     }
     setSaving(true);
     try {
-      const { data: patientData, error: uErr } = await supabase
+      // Check if patient exists by phone
+      const { data: existingPatient } = await supabase
         .from('users')
-        .upsert({
-          id: `pat_${Date.now()}`,
+        .select('id')
+        .eq('phone', phone.trim())
+        .single();
+
+      let patientId: string;
+      if (existingPatient) {
+        patientId = existingPatient.id;
+        await supabase.from('users').update({
+          full_name: fullName.trim(),
+          updated_at: new Date().toISOString(),
+        }).eq('id', patientId);
+      } else {
+        const newId = `pat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const { error: uErr } = await supabase.from('users').insert({
+          id: newId,
           phone: phone.trim(),
           full_name: fullName.trim(),
           role: 'patient',
-        }, { onConflict: 'phone' })
-        .select()
-        .single();
-      if (uErr) throw uErr;
-      const patientId = patientData.id;
+        });
+        if (uErr) throw uErr;
+        patientId = newId;
+      }
 
       const { data: visitData, error: vErr } = await supabase
         .from('patient_visits')
@@ -142,6 +155,7 @@ export default function HospitalPrescriptionPage() {
               message,
               language,
               status: 'pending',
+              pharmacy_id: pharmacyId,
             });
           })
         );

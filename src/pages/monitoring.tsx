@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { format, subDays, parseISO } from 'date-fns';
 import { AlertTriangle, TrendingUp, TrendingDown, CheckCircle, Clock, Activity } from 'lucide-react';
+import { useAuthStore } from '@/store/authStore';
 import { cn } from '@/lib/utils';
 
 interface LogEntry {
@@ -24,6 +25,7 @@ interface ChatMessage {
 }
 
 export default function MonitoringPage() {
+  const { user } = useAuthStore();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState(7);
@@ -38,10 +40,30 @@ export default function MonitoringPage() {
   const fetchData = async () => {
     setLoading(true);
     const since = subDays(new Date(), dateRange).toISOString();
+
+    // Get patient IDs belonging to this pharmacy
+    const { data: visitRows } = await supabase
+      .from('patient_visits')
+      .select('patient_id')
+      .eq('pharmacy_id', user?.id);
+    const patientIds = Array.from(new Set((visitRows || []).map((v: any) => v.patient_id).filter(Boolean)));
+
+    if (patientIds.length === 0) {
+      setStats({ taken: 0, skipped: 0, pending: 0, total: 0 });
+      setMessages([{
+        id: 'sys-start', type: 'system', patient: 'MedWise',
+        time: format(new Date(), 'h:mm a'), status: 'system',
+        text: 'No patients registered yet',
+      }]);
+      setLoading(false);
+      return;
+    }
+
     const { data: logData } = await supabase
       .from('logs')
       .select('*, medication:medications(name), user:users(full_name, phone)')
       .gte('scheduled_time', since)
+      .in('user_id', patientIds)
       .order('scheduled_time', { ascending: true });
 
     const allLogs: LogEntry[] = logData || [];

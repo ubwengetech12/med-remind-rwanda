@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Calendar, Clock, ChevronRight, X, CheckCircle, User, Phone } from 'lucide-react';
+import { useAuthStore } from '@/store/authStore';
 import { format, parseISO, isToday, isFuture } from 'date-fns';
 import { cn } from '@/lib/utils';
 
@@ -31,6 +32,7 @@ const statusStyle: Record<string, string> = {
 };
 
 export default function AppointmentsPage() {
+  const { user } = useAuthStore();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'today' | 'upcoming' | 'past'>('upcoming');
@@ -40,12 +42,26 @@ export default function AppointmentsPage() {
 
   const fetchData = async () => {
     setLoading(true);
+    // Get visit IDs for this pharmacy only
+    const { data: visitRows } = await supabase
+      .from('patient_visits')
+      .select('id')
+      .eq('pharmacy_id', user?.id);
+    const visitIds = (visitRows || []).map((v: any) => v.id);
+
+    if (visitIds.length === 0) {
+      setAppointments([]);
+      setLoading(false);
+      return;
+    }
+
     const { data } = await supabase
       .from('visit_appointments')
       .select(`
         id, appointment_date, appointment_time, notes,
         visit:patient_visits(id, patient:users(full_name, phone))
       `)
+      .in('visit_id', visitIds)
       .order('appointment_date', { ascending: true });
     setAppointments((data || []) as any);
     setLoading(false);

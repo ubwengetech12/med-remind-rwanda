@@ -111,25 +111,46 @@ export default function RegisterPatientPage() {
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      // 1. Upsert patient
-      const { data: patientData, error: uErr } = await supabase
+      // 1. Check if patient already exists by phone
+      const { data: existingPatient } = await supabase
         .from('users')
-        .upsert({
-          id: `pat_${Date.now()}`,
-          phone: s1.phone,
-          full_name: s1.full_name,
-          id_number: s1.id_number,
-          village: s1.village,
-          cell: s1.cell,
-          sector: s1.sector,
-          district: s1.district,
-          insurance: s1.insurance,
-          role: 'patient',
-        }, { onConflict: 'phone' })
-        .select()
+        .select('id')
+        .eq('phone', s1.phone.trim())
         .single();
-      if (uErr) throw uErr;
-      const patientId = patientData.id;
+
+      let patientId: string;
+
+      if (existingPatient) {
+        // Update existing patient
+        await supabase.from('users').update({
+          full_name: s1.full_name,
+          id_number: s1.id_number || null,
+          village: s1.village || null,
+          cell: s1.cell || null,
+          sector: s1.sector || null,
+          district: s1.district || null,
+          insurance: s1.insurance || null,
+          updated_at: new Date().toISOString(),
+        }).eq('id', existingPatient.id);
+        patientId = existingPatient.id;
+      } else {
+        // Insert new patient
+        const newId = `pat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+        const { error: uErr } = await supabase.from('users').insert({
+          id: newId,
+          phone: s1.phone.trim(),
+          full_name: s1.full_name,
+          id_number: s1.id_number || null,
+          village: s1.village || null,
+          cell: s1.cell || null,
+          sector: s1.sector || null,
+          district: s1.district || null,
+          insurance: s1.insurance || null,
+          role: 'patient',
+        });
+        if (uErr) throw uErr;
+        patientId = newId;
+      }
 
       // 2. Create visit — use pharmacyId (user.id)
       const { data: visitData, error: vErr } = await supabase
@@ -215,6 +236,7 @@ export default function RegisterPatientPage() {
               message,
               language: patientLang,
               status: 'pending',
+              pharmacy_id: pharmacyId,
             });
           })
         );

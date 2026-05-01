@@ -103,7 +103,7 @@ export default function MedicationsPage() {
     const pharmacyId = user?.id;
 
     const [medsRes, visitsRes, medsAssignedRes] = await Promise.all([
-      supabase.from('medications').select('*').order('name'),
+      supabase.from('medications').select('*').eq('created_by', pharmacyId).order('name'),
       supabase.from('patient_visits').select('patient_id').eq('pharmacy_id', pharmacyId),
       supabase.from('patient_medications').select('user_id').eq('pharmacy_id', pharmacyId),
     ]);

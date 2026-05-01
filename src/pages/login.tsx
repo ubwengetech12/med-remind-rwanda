@@ -126,7 +126,7 @@ export default function LoginPage() {
     // Sync to local store
     setPharmacy({ name: dbPharmacy.name, email: '', phone: dbPharmacy.phone || '', password: dbPharmacy.password_hash, is_setup_complete: true });
     setPharmacist({ name: dbPharmacy.pharmacist_name || '', phone: dbPharmacy.pharmacist_phone || '', job_card_number: dbPharmacy.job_card_number });
-    setUser({ id: dbPharmacy.job_card_number, phone: dbPharmacy.phone || '', role: 'pharmacist', full_name: dbPharmacy.pharmacist_name || dbPharmacy.name });
+    setUser({ id: dbPharmacy.id, phone: dbPharmacy.phone || '', role: 'pharmacist', full_name: dbPharmacy.pharmacist_name || dbPharmacy.name });
     setLoading(false);
     toast.success(`Welcome back, ${dbPharmacy.pharmacist_name || dbPharmacy.name}!`);
     router.replace('/');
@@ -156,15 +156,19 @@ export default function LoginPage() {
       return;
     }
 
-    // Save to Supabase
-    const { error } = await supabase.from('pharmacies').insert({
-      name: pharmacyName,
-      phone: pharmacyPhone,
-      job_card_number: jc,
-      password_hash: pharmacyPassword,
-      pharmacist_name: pharmacistName,
-      pharmacist_phone: pharmacistPhone,
-    });
+    // Save to Supabase and get back the generated UUID
+    const { data: newPharmacy, error } = await supabase
+      .from('pharmacies')
+      .insert({
+        name: pharmacyName,
+        phone: pharmacyPhone,
+        job_card_number: jc,
+        password_hash: pharmacyPassword,
+        pharmacist_name: pharmacistName,
+        pharmacist_phone: pharmacistPhone,
+      })
+      .select('id')
+      .single();
 
     if (error) {
       toast.error(error.message);
@@ -172,10 +176,10 @@ export default function LoginPage() {
       return;
     }
 
-    // Also save to local store
+    // Also save to local store — use the real UUID as user.id
     setPharmacy({ name: pharmacyName, email: '', phone: pharmacyPhone, password: pharmacyPassword, is_setup_complete: true });
     setPharmacist({ name: pharmacistName, phone: pharmacistPhone, job_card_number: jc });
-    setUser({ id: jc, phone: pharmacyPhone, role: 'pharmacist', full_name: pharmacistName });
+    setUser({ id: newPharmacy.id, phone: pharmacyPhone, role: 'pharmacist', full_name: pharmacistName });
     setLoading(false);
     toast.success('Pharmacy account created!');
     router.replace('/');

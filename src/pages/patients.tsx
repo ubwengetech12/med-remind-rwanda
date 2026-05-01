@@ -75,15 +75,12 @@ export default function PatientsPage() {
 
   const fetchPatients = async () => {
     setLoading(true);
+    const { data: visitRows } = await supabase
+      .from('patient_visits')
+      .select('patient_id')
+      .eq('pharmacy_id', user?.id);
 
-    const [visitsRes, medsRes] = await Promise.all([
-      supabase.from('patient_visits').select('patient_id').eq('pharmacy_id', user?.id),
-      supabase.from('patient_medications').select('user_id').eq('pharmacy_id', user?.id),
-    ]);
-
-    const fromVisits = (visitsRes.data || []).map((v: any) => v.patient_id).filter(Boolean);
-    const fromMeds = (medsRes.data || []).map((m: any) => m.user_id).filter(Boolean);
-    const patientIds = Array.from(new Set([...fromVisits, ...fromMeds]));
+    const patientIds = Array.from(new Set((visitRows || []).map((v: any) => v.patient_id).filter(Boolean)));
 
     if (patientIds.length === 0) {
       setPatients([]);
@@ -133,12 +130,11 @@ export default function PatientsPage() {
           medication:medications(name, category, safety_level)
         `)
         .eq('user_id', p.id)
-        .eq('pharmacy_id', user?.id)
         .order('created_at', { ascending: false }),
     ]);
 
     setVisits(visitsRes.data || []);
-    setPatientMeds(medsRes.data || []);
+    setPatientMeds((medsRes.data || []) as any);
     setSelected({ ...p, _visitCount: visitsRes.data?.length || 0 });
     setLoadingDetail(false);
   };
