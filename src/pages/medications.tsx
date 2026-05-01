@@ -100,18 +100,39 @@ export default function MedicationsPage() {
 
   const fetchData = async () => {
     setLoading(true);
-    const [medsRes, patientsRes] = await Promise.all([
+    const pharmacyId = user?.id;
+
+    const [medsRes, visitsRes, medsAssignedRes] = await Promise.all([
       supabase.from('medications').select('*').order('name'),
-      supabase.from('users').select('id, full_name, phone').eq('role', 'patient'),
+      supabase.from('patient_visits').select('patient_id').eq('pharmacy_id', pharmacyId),
+      supabase.from('patient_medications').select('user_id').eq('pharmacy_id', pharmacyId),
     ]);
+
     setMeds(medsRes.data || []);
-    setPatients(patientsRes.data || []);
+
+    // Collect all patient IDs linked to this pharmacy
+    const fromVisits = (visitsRes.data || []).map((v: any) => v.patient_id).filter(Boolean);
+    const fromMeds = (medsAssignedRes.data || []).map((m: any) => m.user_id).filter(Boolean);
+    const patientIds = Array.from(new Set([...fromVisits, ...fromMeds]));
+
+    if (patientIds.length > 0) {
+      const { data: patientsData } = await supabase
+        .from('users')
+        .select('id, full_name, phone')
+        .eq('role', 'patient')
+        .in('id', patientIds)
+        .order('full_name');
+      setPatients(patientsData || []);
+    } else {
+      setPatients([]);
+    }
+
     setLoading(false);
   };
 
   const fetchStock = async () => {
     setStockLoading(true);
-    const pharmacyId = (pharmacy as any)?.id || user?.id;
+    const pharmacyId = user?.id;
     const { data } = await supabase
       .from('pharmacy_stock')
       .select('*, medication:medications(name)')
@@ -142,7 +163,7 @@ export default function MedicationsPage() {
     }
     setSavingStock(true);
     try {
-      const pharmacyId = (pharmacy as any)?.id || user?.id;
+      const pharmacyId = user?.id;
       const payload = {
         pharmacy_id: pharmacyId,
         medicine_name: stockForm.medicine_name.trim(),
@@ -196,7 +217,7 @@ export default function MedicationsPage() {
       toast.error('CSV must have "name" and "quantity" columns'); return;
     }
 
-    const pharmacyId = (pharmacy as any)?.id || user?.id;
+    const pharmacyId = user?.id;
     const rows = lines.slice(1).map(line => {
       const cols = line.split(',').map(c => c.trim().replace(/"/g, ''));
       return {
@@ -218,7 +239,7 @@ export default function MedicationsPage() {
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  // ── Medication handlers (unchanged) ────────────────────────────────────────
+  // ── Medication handlers ─────────────────────────────────────────────────────
   const openEdit = (med: Medication, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditing(med);
@@ -280,13 +301,19 @@ export default function MedicationsPage() {
     }
     setAssigning(true);
     try {
+      // ── Insert patient_medications with pharmacy_id ──
       const { error } = await supabase.from('patient_medications').insert({
-        user_id: assign.user_id, medication_id: assignMed.id,
-        dosage: assign.dosage, schedule_times: times,
+        user_id: assign.user_id,
+        medication_id: assignMed.id,
+        pharmacy_id: user?.id,
+        dosage: assign.dosage,
+        schedule_times: times,
         food_instruction: assign.food_instruction,
-        start_date: assign.start_date, end_date: assign.end_date || null,
+        start_date: assign.start_date,
+        end_date: assign.end_date || null,
         days_of_week: ['mon','tue','wed','thu','fri','sat','sun'],
-        is_active: true, notes: assign.notes || null,
+        is_active: true,
+        notes: assign.notes || null,
       });
       if (error) throw error;
 
@@ -295,6 +322,7 @@ export default function MedicationsPage() {
       const pharmacyName = (pharmacy as any)?.name || 'MedWise Pharmacy';
       const supportNumber = (pharmacy as any)?.phone || (pharmacist as any)?.phone || '';
 
+      // ── Insert SMS schedules with pharmacy_id ──
       if (patient?.phone) {
         const smsTasks = times.map((time, idx) => {
           const [h, m] = time.split(':').map(Number);
@@ -304,20 +332,29 @@ export default function MedicationsPage() {
           const sendAt = `${String(sendH).padStart(2,'0')}:${String(sendM).padStart(2,'0')}`;
           const message = buildSmsMessage(smsSettings.language, {
             patientName: patient.full_name || patient.phone,
-            pharmacyName, medicineName: assignMed.name + (assign.dosage ? ` ${assign.dosage}` : ''),
-            doseNumber: idx + 1, totalDoses: times.length,
-            exactTime: formatTime(time), supportNumber,
+            pharmacyName,
+            medicineName: assignMed.name + (assign.dosage ? ` ${assign.dosage}` : ''),
+            doseNumber: idx + 1,
+            totalDoses: times.length,
+            exactTime: formatTime(time),
+            supportNumber,
           });
           return supabase.from('sms_schedules').insert({
-            user_id: assign.user_id, phone: patient.phone,
-            medication_name: assignMed.name, dose_time: time,
-            send_at: sendAt, message, language: smsSettings.language, status: 'pending',
+            user_id: assign.user_id,
+            phone: patient.phone,
+            medication_name: assignMed.name,
+            dose_time: time,
+            send_at: sendAt,
+            message,
+            language: smsSettings.language,
+            status: 'pending',
+            pharmacy_id: user?.id,
           });
         });
         await Promise.allSettled(smsTasks);
       }
 
-      toast.success(`${assignMed.name} assigned with SMS reminders!`);
+      toast.success(`${assignMed.name} assigned! SMS reminders saved to queue.`);
       setShowAssign(false);
     } catch (err: any) {
       toast.error(err.message || 'Failed to assign medication');
@@ -495,7 +532,8 @@ export default function MedicationsPage() {
                 <div className="divide-y divide-border">
                   {filteredStock.map(item => (
                     <div key={item.id} className="flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors">
-                      <div className={cn('w-2 h-2 rounded-full flex-shrink-0', item.quantity > 10 ? 'bg-green-400' : item.quantity > 0 ? 'bg-yellow-400' : 'bg-red-400')} />
+                      <div className={cn('w-2 h-2 rounded-full flex-shrink-0',
+                        item.quantity > 10 ? 'bg-green-400' : item.quantity > 0 ? 'bg-yellow-400' : 'bg-red-400')} />
                       <div className="flex-1 min-w-0">
                         <p className="text-white text-sm font-medium truncate">{item.medicine_name}</p>
                         <p className="text-muted text-xs">
@@ -688,7 +726,7 @@ export default function MedicationsPage() {
                   rows={2} className="dash-input w-full resize-none" placeholder="Special instructions..." />
               </div>
               <div className="bg-primary-900/20 border border-primary-900/40 rounded-xl p-3 text-xs text-primary-300">
-                💬 SMS reminders will be scheduled automatically {loadSmsSettings().minutesBefore} min before each dose time.
+                💬 SMS reminders will be saved to queue {loadSmsSettings().minutesBefore} min before each dose time. View them in Supabase → sms_schedules table.
               </div>
             </div>
             <div className="flex gap-3 mt-6">

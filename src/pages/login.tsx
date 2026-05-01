@@ -1,13 +1,13 @@
 'use client';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, ArrowRight, RefreshCw, Eye, EyeOff, Building2, User, Phone, CreditCard } from 'lucide-react';
+import { Lock, ArrowRight, RefreshCw, Eye, EyeOff, Building2, User, Phone, CreditCard, KeyRound } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
-import { setSupabaseContext } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/router';
 import toast from 'react-hot-toast';
 
-type Mode = 'login' | 'setup';
+type Mode = 'login' | 'setup' | 'change-password';
 
 function InputField({ label, icon, value, onChange, placeholder, type = 'text', onEnter }: {
   label: string; icon: React.ReactNode; value: string;
@@ -32,8 +32,8 @@ function InputField({ label, icon, value, onChange, placeholder, type = 'text', 
   );
 }
 
-function PasswordField({ label, value, onChange, onEnter }: {
-  label: string; value: string; onChange: (v: string) => void; onEnter?: () => void;
+function PasswordField({ label, value, onChange, onEnter, placeholder = '••••••••' }: {
+  label: string; value: string; onChange: (v: string) => void; onEnter?: () => void; placeholder?: string;
 }) {
   const [show, setShow] = useState(false);
   return (
@@ -45,7 +45,7 @@ function PasswordField({ label, value, onChange, onEnter }: {
           type={show ? 'text' : 'password'}
           value={value}
           onChange={e => onChange(e.target.value)}
-          placeholder="••••••••"
+          placeholder={placeholder}
           className="flex-1 bg-transparent text-white outline-none placeholder:text-muted text-sm"
           onKeyDown={e => e.key === 'Enter' && onEnter?.()}
         />
@@ -75,36 +75,60 @@ export default function LoginPage() {
   const [pharmacistPhone, setPharmacistPhone] = useState('');
   const [jobCardNumber, setJobCardNumber] = useState('');
 
+  // Change password fields
+  const [cpJobCard, setCpJobCard] = useState('');
+  const [cpOldPassword, setCpOldPassword] = useState('');
+  const [cpNewPassword, setCpNewPassword] = useState('');
+  const [cpConfirm, setCpConfirm] = useState('');
+
   const handleLogin = async () => {
     if (!loginJobCard || !loginPassword) { toast.error('Enter job card number and password'); return; }
-    if (!pharmacy?.is_setup_complete) {
-      toast.error('No pharmacy account found. Please set up first.');
-      setMode('setup'); return;
-    }
     setLoadingLocal(true);
-    await new Promise(r => setTimeout(r, 400));
 
-    if (
-      loginJobCard.trim().toLowerCase() !== pharmacist?.job_card_number?.toLowerCase() ||
-      loginPassword !== pharmacy.password
-    ) {
-      toast.error('Wrong job card number or password');
-      setLoadingLocal(false); return;
+    // Try Supabase first
+    const { data: dbPharmacy, error } = await supabase
+      .from('pharmacies')
+      .select('*')
+      .eq('job_card_number', loginJobCard.trim())
+      .single();
+
+    if (error || !dbPharmacy) {
+      // Fallback: local store
+      if (!pharmacy?.is_setup_complete) {
+        toast.error('No pharmacy account found. Please set up first.');
+        setMode('setup');
+        setLoadingLocal(false);
+        return;
+      }
+      if (
+        loginJobCard.trim().toLowerCase() !== pharmacist?.job_card_number?.toLowerCase() ||
+        loginPassword !== pharmacy.password
+      ) {
+        toast.error('Wrong job card number or password');
+        setLoadingLocal(false);
+        return;
+      }
+      // Local login success
+      setUser({ id: loginJobCard.trim(), phone: pharmacy.phone, role: 'pharmacist', full_name: pharmacist?.name || pharmacy.name });
+      setLoading(false);
+      toast.success(`Welcome back, ${pharmacist?.name || pharmacy.name}!`);
+      router.replace('/');
+      setLoadingLocal(false);
+      return;
     }
 
-    const userId = pharmacist!.job_card_number;
+    if (loginPassword !== dbPharmacy.password_hash) {
+      toast.error('Wrong password');
+      setLoadingLocal(false);
+      return;
+    }
 
-    // Set Supabase RLS context so this pharmacy only sees their own data
-    await setSupabaseContext(userId, 'pharmacist');
-
-    setUser({
-      id: userId,
-      phone: pharmacy.phone,
-      role: 'pharmacist',
-      full_name: pharmacist?.name || pharmacy.name,
-    });
+    // Sync to local store
+    setPharmacy({ name: dbPharmacy.name, email: '', phone: dbPharmacy.phone || '', password: dbPharmacy.password_hash, is_setup_complete: true });
+    setPharmacist({ name: dbPharmacy.pharmacist_name || '', phone: dbPharmacy.pharmacist_phone || '', job_card_number: dbPharmacy.job_card_number });
+    setUser({ id: dbPharmacy.job_card_number, phone: dbPharmacy.phone || '', role: 'pharmacist', full_name: dbPharmacy.pharmacist_name || dbPharmacy.name });
     setLoading(false);
-    toast.success(`Welcome back, ${pharmacist?.name || pharmacy.name}!`);
+    toast.success(`Welcome back, ${dbPharmacy.pharmacist_name || dbPharmacy.name}!`);
     router.replace('/');
     setLoadingLocal(false);
   };
@@ -115,34 +139,105 @@ export default function LoginPage() {
     }
     if (pharmacyPassword.length < 6) { toast.error('Password must be at least 6 characters'); return; }
     setLoadingLocal(true);
-    await new Promise(r => setTimeout(r, 400));
 
-    const userId = jobCardNumber.trim();
+    const jc = jobCardNumber.trim();
 
-    // Set Supabase RLS context so this pharmacy only sees their own data
-    await setSupabaseContext(userId, 'pharmacist');
+    // Check if job card already exists
+    const { data: existing } = await supabase
+      .from('pharmacies')
+      .select('id')
+      .eq('job_card_number', jc)
+      .single();
 
-    setPharmacy({
+    if (existing) {
+      toast.error('This job card number is already registered. Sign in instead.');
+      setMode('login');
+      setLoadingLocal(false);
+      return;
+    }
+
+    // Save to Supabase
+    const { error } = await supabase.from('pharmacies').insert({
       name: pharmacyName,
-      email: '',
       phone: pharmacyPhone,
-      password: pharmacyPassword,
-      is_setup_complete: true,
+      job_card_number: jc,
+      password_hash: pharmacyPassword,
+      pharmacist_name: pharmacistName,
+      pharmacist_phone: pharmacistPhone,
     });
-    setPharmacist({
-      name: pharmacistName,
-      phone: pharmacistPhone,
-      job_card_number: userId,
-    });
-    setUser({
-      id: userId,
-      phone: pharmacyPhone,
-      role: 'pharmacist',
-      full_name: pharmacistName,
-    });
+
+    if (error) {
+      toast.error(error.message);
+      setLoadingLocal(false);
+      return;
+    }
+
+    // Also save to local store
+    setPharmacy({ name: pharmacyName, email: '', phone: pharmacyPhone, password: pharmacyPassword, is_setup_complete: true });
+    setPharmacist({ name: pharmacistName, phone: pharmacistPhone, job_card_number: jc });
+    setUser({ id: jc, phone: pharmacyPhone, role: 'pharmacist', full_name: pharmacistName });
     setLoading(false);
     toast.success('Pharmacy account created!');
     router.replace('/');
+    setLoadingLocal(false);
+  };
+
+  const handleChangePassword = async () => {
+    if (!cpJobCard || !cpOldPassword || !cpNewPassword || !cpConfirm) {
+      toast.error('All fields are required'); return;
+    }
+    if (cpNewPassword.length < 6) { toast.error('New password must be at least 6 characters'); return; }
+    if (cpNewPassword !== cpConfirm) { toast.error('New passwords do not match'); return; }
+
+    setLoadingLocal(true);
+
+    // Find in Supabase
+    const { data: dbPharmacy } = await supabase
+      .from('pharmacies')
+      .select('*')
+      .eq('job_card_number', cpJobCard.trim())
+      .single();
+
+    if (!dbPharmacy) {
+      // Try local store
+      if (pharmacy?.is_setup_complete && pharmacist?.job_card_number === cpJobCard.trim()) {
+        if (cpOldPassword !== pharmacy.password) {
+          toast.error('Current password is wrong');
+          setLoadingLocal(false);
+          return;
+        }
+        setPharmacy({ ...pharmacy, password: cpNewPassword });
+        toast.success('Password changed!');
+        setMode('login');
+        setLoadingLocal(false);
+        return;
+      }
+      toast.error('Job card number not found');
+      setLoadingLocal(false);
+      return;
+    }
+
+    if (cpOldPassword !== dbPharmacy.password_hash) {
+      toast.error('Current password is wrong');
+      setLoadingLocal(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from('pharmacies')
+      .update({ password_hash: cpNewPassword })
+      .eq('job_card_number', cpJobCard.trim());
+
+    if (error) {
+      toast.error(error.message);
+      setLoadingLocal(false);
+      return;
+    }
+
+    // Update local store too
+    if (pharmacy) setPharmacy({ ...pharmacy, password: cpNewPassword });
+    toast.success('Password changed successfully!');
+    setMode('login');
     setLoadingLocal(false);
   };
 
@@ -181,12 +276,12 @@ export default function LoginPage() {
           </div>
 
           <AnimatePresence mode="wait">
-            {mode === 'login' ? (
+
+            {/* ── LOGIN ── */}
+            {mode === 'login' && (
               <motion.div key="login" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}>
                 <h2 className="text-white text-2xl font-bold mb-1">Sign in</h2>
-                <p className="text-muted text-sm mb-8">
-                  {pharmacy?.is_setup_complete ? pharmacy.name : 'Pharmacist access only'}
-                </p>
+                <p className="text-muted text-sm mb-8">Pharmacist access only</p>
                 <div className="space-y-4 mb-6">
                   <InputField
                     label="Job Card Number"
@@ -207,24 +302,26 @@ export default function LoginPage() {
                   className="w-full bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-12 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors mb-4">
                   {loading ? <RefreshCw size={18} className="animate-spin" /> : <><ArrowRight size={18} /> Sign In</>}
                 </button>
-                {!pharmacy?.is_setup_complete && (
-                  <p className="text-center text-muted text-sm">
-                    First time?{' '}
-                    <button onClick={() => setMode('setup')} className="text-primary-400 hover:text-primary-300 font-medium">
-                      Set up your pharmacy
-                    </button>
-                  </p>
-                )}
+                <div className="flex flex-col gap-2 text-center">
+                  <button onClick={() => setMode('setup')} className="text-primary-400 hover:text-primary-300 text-sm font-medium">
+                    First time? Set up your pharmacy
+                  </button>
+                  <button onClick={() => setMode('change-password')} className="text-muted hover:text-white text-sm flex items-center justify-center gap-1.5">
+                    <KeyRound size={13} /> Change Password
+                  </button>
+                </div>
               </motion.div>
+            )}
 
-            ) : (
+            {/* ── SETUP ── */}
+            {mode === 'setup' && (
               <motion.div key="setup" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}>
                 <h2 className="text-white text-2xl font-bold mb-1">Setup Pharmacy</h2>
                 <p className="text-muted text-sm mb-6">
-                  One-time setup — you'll use your job card number & password to sign in every day
+                  One-time setup — use your job card number & password to sign in every day
                 </p>
                 <div className="space-y-3 mb-4">
-                  <p className="text-primary-400 text.xs font-semibold uppercase tracking-wider flex items-center gap-2">
+                  <p className="text-primary-400 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
                     <Building2 size={12} /> Pharmacy Info
                   </p>
                   <InputField label="Pharmacy / Clinic Name" icon={<Building2 size={15} />} value={pharmacyName}
@@ -254,6 +351,52 @@ export default function LoginPage() {
                 </p>
               </motion.div>
             )}
+
+            {/* ── CHANGE PASSWORD ── */}
+            {mode === 'change-password' && (
+              <motion.div key="change-password" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}>
+                <h2 className="text-white text-2xl font-bold mb-1">Change Password</h2>
+                <p className="text-muted text-sm mb-6">Enter your job card number and current password to set a new one</p>
+                <div className="space-y-4 mb-6">
+                  <InputField
+                    label="Job Card Number"
+                    icon={<CreditCard size={16} />}
+                    value={cpJobCard}
+                    onChange={setCpJobCard}
+                    placeholder="JC-2024-0001"
+                  />
+                  <PasswordField
+                    label="Current Password"
+                    value={cpOldPassword}
+                    onChange={setCpOldPassword}
+                    placeholder="Current password"
+                  />
+                  <PasswordField
+                    label="New Password"
+                    value={cpNewPassword}
+                    onChange={setCpNewPassword}
+                    placeholder="At least 6 characters"
+                  />
+                  <PasswordField
+                    label="Confirm New Password"
+                    value={cpConfirm}
+                    onChange={setCpConfirm}
+                    onEnter={handleChangePassword}
+                    placeholder="Repeat new password"
+                  />
+                </div>
+                <button onClick={handleChangePassword} disabled={loading}
+                  className="w-full bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-12 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors mb-4">
+                  {loading ? <RefreshCw size={18} className="animate-spin" /> : <><KeyRound size={18} /> Change Password</>}
+                </button>
+                <p className="text-center text-muted text-sm">
+                  <button onClick={() => setMode('login')} className="text-primary-400 hover:text-primary-300 font-medium">
+                    Back to Sign in
+                  </button>
+                </p>
+              </motion.div>
+            )}
+
           </AnimatePresence>
         </div>
       </div>

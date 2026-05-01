@@ -7,7 +7,7 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import {
   Plus, Search, X, ChevronRight, Phone, MapPin,
   ShieldCheck, Activity, Pill, Calendar, FlaskConical,
-  AlertTriangle, UserPlus, Clock, Trash2
+  AlertTriangle, UserPlus, Clock, Trash2, CheckCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
@@ -24,9 +24,37 @@ interface Visit {
   id: string; visit_date: string; status: string;
   visit_diseases?: { reported_by_patient?: string; found_by_doctor?: string }[];
   visit_tests?: { has_test: boolean; test_name?: string }[];
-  visit_prescriptions?: { medicine_name: string; type: string; dosage?: string; times_per_day?: number }[];
+  visit_prescriptions?: { medicine_name: string; type: string; dosage?: string; times_per_day?: number; quantity_given?: number }[];
   visit_avoidances?: { avoidance: string }[];
   visit_appointments?: { appointment_date: string; appointment_time?: string; notes?: string }[];
+}
+
+interface PatientMedication {
+  id: string;
+  medication_id: string;
+  dosage: string;
+  schedule_times: string[];
+  food_instruction: string;
+  start_date: string;
+  end_date?: string;
+  is_active: boolean;
+  notes?: string;
+  created_at: string;
+  medication?: { name: string; category?: string; safety_level: string };
+}
+
+const FOOD_LABELS: Record<string, string> = {
+  before_food: 'Before Food',
+  after_food: 'After Food',
+  with_food: 'With Food',
+  empty_stomach: 'Empty Stomach',
+};
+
+function formatTime(time: string): string {
+  const [h, m] = time.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${hour}:${m.toString().padStart(2, '0')} ${period}`;
 }
 
 export default function PatientsPage() {
@@ -37,22 +65,25 @@ export default function PatientsPage() {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Patient | null>(null);
   const [visits, setVisits] = useState<Visit[]>([]);
+  const [patientMeds, setPatientMeds] = useState<PatientMedication[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [expandedVisit, setExpandedVisit] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [detailTab, setDetailTab] = useState<'visits' | 'medications'>('visits');
 
   useEffect(() => { fetchPatients(); }, []);
 
   const fetchPatients = async () => {
     setLoading(true);
 
-    // Step 1: get patient IDs who visited this pharmacy
-    const { data: visits } = await supabase
-      .from('patient_visits')
-      .select('patient_id')
-      .eq('pharmacy_id', user?.id);
+    const [visitsRes, medsRes] = await Promise.all([
+      supabase.from('patient_visits').select('patient_id').eq('pharmacy_id', user?.id),
+      supabase.from('patient_medications').select('user_id').eq('pharmacy_id', user?.id),
+    ]);
 
-    const patientIds = Array.from(new Set((visits || []).map(v => v.patient_id).filter(Boolean)));
+    const fromVisits = (visitsRes.data || []).map((v: any) => v.patient_id).filter(Boolean);
+    const fromMeds = (medsRes.data || []).map((m: any) => m.user_id).filter(Boolean);
+    const patientIds = Array.from(new Set([...fromVisits, ...fromMeds]));
 
     if (patientIds.length === 0) {
       setPatients([]);
@@ -60,7 +91,6 @@ export default function PatientsPage() {
       return;
     }
 
-    // Step 2: fetch only those patients
     const { data } = await supabase
       .from('users')
       .select('*')
@@ -75,23 +105,41 @@ export default function PatientsPage() {
   const openDetail = async (p: Patient) => {
     setSelected(p);
     setVisits([]);
+    setPatientMeds([]);
     setExpandedVisit(null);
+    setDetailTab('visits');
     setLoadingDetail(true);
-    const { data } = await supabase
-      .from('patient_visits')
-      .select(`
-        id, visit_date, status,
-        visit_diseases(reported_by_patient, found_by_doctor),
-        visit_tests(has_test, test_name),
-        visit_prescriptions(medicine_name, type, dosage, times_per_day),
-        visit_avoidances(avoidance),
-        visit_appointments(appointment_date, appointment_time, notes)
-      `)
-      .eq('patient_id', p.id)
-      .eq('pharmacy_id', user?.id)
-      .order('visit_date', { ascending: false });
-    setVisits(data || []);
-    setSelected({ ...p, _visitCount: data?.length || 0 });
+
+    const [visitsRes, medsRes] = await Promise.all([
+      supabase
+        .from('patient_visits')
+        .select(`
+          id, visit_date, status,
+          visit_diseases(reported_by_patient, found_by_doctor),
+          visit_tests(has_test, test_name),
+          visit_prescriptions(medicine_name, type, dosage, times_per_day, quantity_given),
+          visit_avoidances(avoidance),
+          visit_appointments(appointment_date, appointment_time, notes)
+        `)
+        .eq('patient_id', p.id)
+        .eq('pharmacy_id', user?.id)
+        .order('visit_date', { ascending: false }),
+
+      supabase
+        .from('patient_medications')
+        .select(`
+          id, medication_id, dosage, schedule_times, food_instruction,
+          start_date, end_date, is_active, notes, created_at,
+          medication:medications(name, category, safety_level)
+        `)
+        .eq('user_id', p.id)
+        .eq('pharmacy_id', user?.id)
+        .order('created_at', { ascending: false }),
+    ]);
+
+    setVisits(visitsRes.data || []);
+    setPatientMeds(medsRes.data || []);
+    setSelected({ ...p, _visitCount: visitsRes.data?.length || 0 });
     setLoadingDetail(false);
   };
 
@@ -99,29 +147,23 @@ export default function PatientsPage() {
     if (!confirm(`Delete ${p.full_name || 'this patient'}? This cannot be undone.`)) return;
     setDeleting(true);
     try {
-      // Delete visits for this pharmacy first
-      await supabase
-        .from('patient_visits')
-        .delete()
-        .eq('patient_id', p.id)
-        .eq('pharmacy_id', user?.id);
-
-      // Delete the patient user record
-      const { error } = await supabase
-        .from('users')
-        .delete()
-        .eq('id', p.id);
-
+      await supabase.from('patient_visits').delete().eq('patient_id', p.id).eq('pharmacy_id', user?.id);
+      const { error } = await supabase.from('users').delete().eq('id', p.id);
       if (error) throw error;
-
       toast.success('Patient deleted');
       setSelected(null);
       fetchPatients();
-    } catch (err) {
+    } catch {
       toast.error('Failed to delete patient');
     } finally {
       setDeleting(false);
     }
+  };
+
+  const safetyColor: Record<string, string> = {
+    green: 'text-green-400 bg-green-900/30',
+    yellow: 'text-yellow-400 bg-yellow-900/30',
+    red: 'text-red-400 bg-red-900/30',
   };
 
   const filtered = patients.filter(p =>
@@ -262,6 +304,10 @@ export default function PatientsPage() {
                   <p className="text-white font-semibold">{selected._visitCount ?? 0}</p>
                 </div>
                 <div className="flex-1 bg-surface rounded-xl p-3 text-center">
+                  <p className="text-muted text-xs mb-1">Active Meds</p>
+                  <p className="text-primary-400 font-semibold">{patientMeds.filter(m => m.is_active).length}</p>
+                </div>
+                <div className="flex-1 bg-surface rounded-xl p-3 text-center">
                   <p className="text-muted text-xs mb-1">Registered</p>
                   <p className="text-white font-semibold text-xs">
                     {format(parseISO(selected.created_at), 'MMM d, yyyy')}
@@ -269,121 +315,239 @@ export default function PatientsPage() {
                 </div>
               </div>
 
-              {/* Visit History */}
-              <div>
-                <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                  <Clock size={12} /> Visit History
-                </p>
+              {/* Tabs: Visits | Medications */}
+              <div className="flex gap-1 bg-surface rounded-xl p-1">
+                <button
+                  onClick={() => setDetailTab('visits')}
+                  className={cn('flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors',
+                    detailTab === 'visits' ? 'bg-primary-500 text-white' : 'text-muted hover:text-white')}>
+                  <Clock size={13} /> Visit History
+                </button>
+                <button
+                  onClick={() => setDetailTab('medications')}
+                  className={cn('flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors',
+                    detailTab === 'medications' ? 'bg-primary-500 text-white' : 'text-muted hover:text-white')}>
+                  <Pill size={13} /> Medications
+                  {patientMeds.filter(m => m.is_active).length > 0 && (
+                    <span className="bg-white/20 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">
+                      {patientMeds.filter(m => m.is_active).length}
+                    </span>
+                  )}
+                </button>
+              </div>
 
-                {loadingDetail ? (
-                  <div className="space-y-2">
-                    {Array(3).fill(0).map((_, i) => <div key={i} className="h-12 bg-border rounded-xl animate-pulse" />)}
-                  </div>
-                ) : visits.length === 0 ? (
-                  <p className="text-muted text-sm">No visits recorded yet</p>
-                ) : (
-                  <div className="space-y-2">
-                    {visits.map(v => {
-                      const isOpen = expandedVisit === v.id;
-                      const disease = v.visit_diseases?.[0];
-                      const rx = v.visit_prescriptions || [];
-                      const appts = v.visit_appointments || [];
-                      const tests = v.visit_tests || [];
-                      const avoids = v.visit_avoidances || [];
+              {/* VISITS TAB */}
+              {detailTab === 'visits' && (
+                <div>
+                  {loadingDetail ? (
+                    <div className="space-y-2">
+                      {Array(3).fill(0).map((_, i) => <div key={i} className="h-12 bg-border rounded-xl animate-pulse" />)}
+                    </div>
+                  ) : visits.length === 0 ? (
+                    <p className="text-muted text-sm">No visits recorded yet</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {visits.map(v => {
+                        const isOpen = expandedVisit === v.id;
+                        const disease = v.visit_diseases?.[0];
+                        const rx = v.visit_prescriptions || [];
+                        const appts = v.visit_appointments || [];
+                        const tests = v.visit_tests || [];
+                        const avoids = v.visit_avoidances || [];
 
-                      return (
-                        <div key={v.id} className="border border-border rounded-xl overflow-hidden">
-                          <button
-                            onClick={() => setExpandedVisit(isOpen ? null : v.id)}
-                            className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors text-left">
-                            <div className="flex items-center gap-2">
-                              <Calendar size={14} className="text-primary-400" />
-                              <span className="text-white text-sm font-medium">
-                                {format(parseISO(v.visit_date), 'MMM d, yyyy')}
-                              </span>
-                              {rx.length > 0 && (
-                                <span className="text-xs bg-primary-900/30 text-primary-400 border border-primary-900/40 px-2 py-0.5 rounded-lg">
-                                  {rx.length} med{rx.length > 1 ? 's' : ''}
+                        return (
+                          <div key={v.id} className="border border-border rounded-xl overflow-hidden">
+                            <button
+                              onClick={() => setExpandedVisit(isOpen ? null : v.id)}
+                              className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors text-left">
+                              <div className="flex items-center gap-2">
+                                <Calendar size={14} className="text-primary-400" />
+                                <span className="text-white text-sm font-medium">
+                                  {format(parseISO(v.visit_date), 'MMM d, yyyy')}
                                 </span>
-                              )}
-                            </div>
-                            <ChevronRight size={14} className={cn('text-muted transition-transform', isOpen && 'rotate-90')} />
-                          </button>
+                                {disease?.reported_by_patient && (
+                                  <span className="text-xs bg-yellow-900/30 text-yellow-400 border border-yellow-900/40 px-2 py-0.5 rounded-lg truncate max-w-[120px]">
+                                    {disease.reported_by_patient}
+                                  </span>
+                                )}
+                                {rx.length > 0 && (
+                                  <span className="text-xs bg-primary-900/30 text-primary-400 border border-primary-900/40 px-2 py-0.5 rounded-lg">
+                                    {rx.length} med{rx.length > 1 ? 's' : ''}
+                                  </span>
+                                )}
+                              </div>
+                              <ChevronRight size={14} className={cn('text-muted transition-transform flex-shrink-0', isOpen && 'rotate-90')} />
+                            </button>
 
-                          {isOpen && (
-                            <div className="border-t border-border px-4 pb-4 pt-3 space-y-4 bg-surface/40">
+                            {isOpen && (
+                              <div className="border-t border-border px-4 pb-4 pt-3 space-y-4 bg-surface/40">
 
-                              {/* Diseases */}
-                              {(disease?.reported_by_patient || disease?.found_by_doctor) && (
-                                <div>
-                                  <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><Activity size={11} /> Diseases</p>
-                                  {disease.reported_by_patient && (
-                                    <p className="text-white text-sm"><span className="text-muted text-xs">Patient: </span>{disease.reported_by_patient}</p>
-                                  )}
-                                  {disease.found_by_doctor && (
-                                    <p className="text-white text-sm mt-0.5"><span className="text-muted text-xs">Doctor: </span>{disease.found_by_doctor}</p>
-                                  )}
-                                </div>
-                              )}
+                                {/* Diseases */}
+                                {(disease?.reported_by_patient || disease?.found_by_doctor) && (
+                                  <div>
+                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1">
+                                      <Activity size={11} /> Disease / Diagnosis
+                                    </p>
+                                    {disease.reported_by_patient && (
+                                      <p className="text-white text-sm">
+                                        <span className="text-muted text-xs">Patient reported: </span>{disease.reported_by_patient}
+                                      </p>
+                                    )}
+                                    {disease.found_by_doctor && (
+                                      <p className="text-white text-sm mt-0.5">
+                                        <span className="text-muted text-xs">Doctor found: </span>{disease.found_by_doctor}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
 
-                              {/* Tests */}
-                              {tests.some(t => t.has_test) && (
-                                <div>
-                                  <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><FlaskConical size={11} /> Tests</p>
-                                  {tests.filter(t => t.has_test).map((t, i) => (
-                                    <p key={i} className="text-white text-sm">{t.test_name || 'Test ordered'}</p>
-                                  ))}
-                                </div>
-                              )}
+                                {/* Tests */}
+                                {tests.some(t => t.has_test) && (
+                                  <div>
+                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><FlaskConical size={11} /> Tests</p>
+                                    {tests.filter(t => t.has_test).map((t, i) => (
+                                      <p key={i} className="text-white text-sm">{t.test_name || 'Test ordered'}</p>
+                                    ))}
+                                  </div>
+                                )}
 
-                              {/* Prescriptions */}
-                              {rx.length > 0 && (
-                                <div>
-                                  <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><Pill size={11} /> Prescriptions</p>
-                                  <div className="space-y-1">
-                                    {rx.map((r, i) => (
+                                {/* Prescriptions / Medicine Received */}
+                                {rx.length > 0 && (
+                                  <div>
+                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1">
+                                      <Pill size={11} /> Medicine Received
+                                    </p>
+                                    <div className="space-y-1">
+                                      {rx.map((r, i) => (
+                                        <div key={i} className="bg-card rounded-lg px-3 py-2">
+                                          <div className="flex items-center gap-1.5">
+                                            <CheckCircle size={12} className="text-green-400 flex-shrink-0" />
+                                            <p className="text-white text-sm font-medium">{r.medicine_name}</p>
+                                          </div>
+                                          <p className="text-muted text-xs mt-0.5 ml-4">
+                                            {r.type && <span>{r.type}</span>}
+                                            {r.dosage && <span> · {r.dosage}</span>}
+                                            {r.times_per_day && <span> · {r.times_per_day}x/day</span>}
+                                            {r.quantity_given && <span> · Qty: {r.quantity_given}</span>}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Avoidances */}
+                                {avoids.length > 0 && (
+                                  <div>
+                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><AlertTriangle size={11} /> Avoidances</p>
+                                    {avoids.map((a, i) => (
+                                      <p key={i} className="text-white text-sm">• {a.avoidance}</p>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Appointments */}
+                                {appts.length > 0 && (
+                                  <div>
+                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><Calendar size={11} /> Appointments</p>
+                                    {appts.map((a, i) => (
                                       <div key={i} className="bg-card rounded-lg px-3 py-2">
-                                        <p className="text-white text-sm font-medium">{r.medicine_name}</p>
-                                        <p className="text-muted text-xs">
-                                          {r.type} {r.dosage && `· ${r.dosage}`} {r.times_per_day && `· ${r.times_per_day}x/day`}
+                                        <p className="text-white text-sm">
+                                          {format(parseISO(a.appointment_date), 'MMM d, yyyy')}
+                                          {a.appointment_time && ` at ${a.appointment_time}`}
                                         </p>
+                                        {a.notes && <p className="text-muted text-xs mt-0.5">{a.notes}</p>}
                                       </div>
                                     ))}
                                   </div>
-                                </div>
-                              )}
+                                )}
 
-                              {/* Avoidances */}
-                              {avoids.length > 0 && (
-                                <div>
-                                  <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><AlertTriangle size={11} /> Avoidances</p>
-                                  {avoids.map((a, i) => (
-                                    <p key={i} className="text-white text-sm">• {a.avoidance}</p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* MEDICATIONS TAB */}
+              {detailTab === 'medications' && (
+                <div>
+                  {loadingDetail ? (
+                    <div className="space-y-2">
+                      {Array(3).fill(0).map((_, i) => <div key={i} className="h-16 bg-border rounded-xl animate-pulse" />)}
+                    </div>
+                  ) : patientMeds.length === 0 ? (
+                    <div className="text-center py-8 space-y-2">
+                      <Pill size={24} className="text-muted mx-auto" />
+                      <p className="text-muted text-sm">No medications assigned yet</p>
+                      <p className="text-muted text-xs">Go to Medications → Assign to Patient</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {patientMeds.map(med => (
+                        <div key={med.id} className={cn(
+                          'border rounded-xl p-4',
+                          med.is_active ? 'border-primary-900/40 bg-primary-900/10' : 'border-border bg-surface/40'
+                        )}>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="text-white font-medium text-sm truncate">
+                                  {(med.medication as any)?.name || 'Unknown Medicine'}
+                                </p>
+                                {med.medication && (
+                                  <span className={cn(
+                                    'text-xs px-1.5 py-0.5 rounded flex-shrink-0',
+                                    safetyColor[(med.medication as any).safety_level] || 'text-muted bg-surface'
+                                  )}>
+                                    {(med.medication as any).safety_level}
+                                  </span>
+                                )}
+                              </div>
+                              {med.dosage && (
+                                <p className="text-muted text-xs mb-1">Dosage: <span className="text-white/80">{med.dosage}</span></p>
+                              )}
+                              {med.food_instruction && (
+                                <p className="text-muted text-xs mb-1">
+                                  Food: <span className="text-white/80">{FOOD_LABELS[med.food_instruction] || med.food_instruction}</span>
+                                </p>
+                              )}
+                              {med.schedule_times && med.schedule_times.length > 0 && (
+                                <div className="flex items-center gap-1 flex-wrap mt-1.5">
+                                  <Clock size={11} className="text-primary-400" />
+                                  {med.schedule_times.map((t, i) => (
+                                    <span key={i} className="text-xs bg-primary-900/30 text-primary-300 border border-primary-900/40 px-1.5 py-0.5 rounded">
+                                      {formatTime(t)}
+                                    </span>
                                   ))}
                                 </div>
                               )}
-
-                              {/* Appointments */}
-                              {appts.length > 0 && (
-                                <div>
-                                  <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><Calendar size={11} /> Appointments</p>
-                                  {appts.map((a, i) => (
-                                    <div key={i} className="bg-card rounded-lg px-3 py-2">
-                                      <p className="text-white text-sm">{format(parseISO(a.appointment_date), 'MMM d, yyyy')}{a.appointment_time && ` at ${a.appointment_time}`}</p>
-                                      {a.notes && <p className="text-muted text-xs mt-0.5">{a.notes}</p>}
-                                    </div>
-                                  ))}
-                                </div>
+                              {(med.start_date || med.end_date) && (
+                                <p className="text-muted text-xs mt-1.5">
+                                  {med.start_date && <span>From {format(parseISO(med.start_date), 'MMM d, yyyy')}</span>}
+                                  {med.end_date && <span> → {format(parseISO(med.end_date), 'MMM d, yyyy')}</span>}
+                                </p>
                               )}
-
+                              {med.notes && (
+                                <p className="text-muted text-xs mt-1 italic">{med.notes}</p>
+                              )}
                             </div>
-                          )}
+                            <span className={cn(
+                              'text-xs font-semibold px-2 py-0.5 rounded-lg flex-shrink-0',
+                              med.is_active ? 'bg-green-900/30 text-green-400' : 'bg-surface text-muted'
+                            )}>
+                              {med.is_active ? 'Active' : 'Ended'}
+                            </span>
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* New Visit button */}
               <button
