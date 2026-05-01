@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Lock, ArrowRight, RefreshCw, Eye, EyeOff, Building2, User, Phone, CreditCard } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
+import { setSupabaseContext } from '@/lib/supabase';
 import { useRouter } from 'next/router';
 import toast from 'react-hot-toast';
 
@@ -62,7 +63,7 @@ export default function LoginPage() {
   const [mode, setMode] = useState<Mode>('login');
   const [loading, setLoadingLocal] = useState(false);
 
-  // Login fields — job card + password
+  // Login fields
   const [loginJobCard, setLoginJobCard] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
@@ -91,9 +92,13 @@ export default function LoginPage() {
       setLoadingLocal(false); return;
     }
 
-    // user.id = job card number — stable, used as pharmacy_id in Supabase
+    const userId = pharmacist!.job_card_number;
+
+    // Set Supabase RLS context so this pharmacy only sees their own data
+    await setSupabaseContext(userId, 'pharmacist');
+
     setUser({
-      id: pharmacist!.job_card_number,
+      id: userId,
       phone: pharmacy.phone,
       role: 'pharmacist',
       full_name: pharmacist?.name || pharmacy.name,
@@ -112,6 +117,11 @@ export default function LoginPage() {
     setLoadingLocal(true);
     await new Promise(r => setTimeout(r, 400));
 
+    const userId = jobCardNumber.trim();
+
+    // Set Supabase RLS context so this pharmacy only sees their own data
+    await setSupabaseContext(userId, 'pharmacist');
+
     setPharmacy({
       name: pharmacyName,
       email: '',
@@ -122,11 +132,10 @@ export default function LoginPage() {
     setPharmacist({
       name: pharmacistName,
       phone: pharmacistPhone,
-      job_card_number: jobCardNumber.trim(),
+      job_card_number: userId,
     });
-    // user.id = job card number — this becomes pharmacy_id for all Supabase records
     setUser({
-      id: jobCardNumber.trim(),
+      id: userId,
       phone: pharmacyPhone,
       role: 'pharmacist',
       full_name: pharmacistName,
@@ -214,9 +223,8 @@ export default function LoginPage() {
                 <p className="text-muted text-sm mb-6">
                   One-time setup — you'll use your job card number & password to sign in every day
                 </p>
-
                 <div className="space-y-3 mb-4">
-                  <p className="text-primary-400 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
+                  <p className="text-primary-400 text.xs font-semibold uppercase tracking-wider flex items-center gap-2">
                     <Building2 size={12} /> Pharmacy Info
                   </p>
                   <InputField label="Pharmacy / Clinic Name" icon={<Building2 size={15} />} value={pharmacyName}
@@ -224,7 +232,6 @@ export default function LoginPage() {
                   <InputField label="Phone Number" icon={<Phone size={15} />} value={pharmacyPhone}
                     onChange={setPharmacyPhone} placeholder="+250 788 000 000" />
                   <PasswordField label="Password (used every day)" value={pharmacyPassword} onChange={setPharmacyPassword} />
-
                   <p className="text-primary-400 text-xs font-semibold uppercase tracking-wider flex items-center gap-2 pt-2">
                     <User size={12} /> Pharmacist Info
                   </p>
@@ -235,7 +242,6 @@ export default function LoginPage() {
                   <InputField label="Job Card Number" icon={<CreditCard size={15} />} value={jobCardNumber}
                     onChange={setJobCardNumber} placeholder="JC-2024-0001" onEnter={handleSetup} />
                 </div>
-
                 <button onClick={handleSetup} disabled={loading}
                   className="w-full bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white h-12 rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors mb-4">
                   {loading ? <RefreshCw size={18} className="animate-spin" /> : <><ArrowRight size={18} /> Create Account</>}

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { Toaster } from 'react-hot-toast';
 import { useAuthStore } from '@/store/authStore';
+import { setSupabaseContext } from '@/lib/supabase';
 import '../styles/globals.css';
 
 const PUBLIC_ROUTES = ['/login'];
@@ -13,7 +14,7 @@ export default function App({ Component, pageProps }: AppProps) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    // Manually rehydrate persisted store, then mark ready
+    // Rehydrate persisted store then mark ready
     useAuthStore.persist.rehydrate();
     setLoading(false);
     setHydrated(true);
@@ -22,11 +23,16 @@ export default function App({ Component, pageProps }: AppProps) {
   useEffect(() => {
     if (!hydrated) return;
     const isPublic = PUBLIC_ROUTES.includes(router.pathname);
-    if (!user && !isPublic) router.replace('/login');
-    else if (user && isPublic) router.replace('/');
+    if (!user && !isPublic) {
+      router.replace('/login');
+    } else if (user && isPublic) {
+      router.replace('/');
+    } else if (user) {
+      // Re-set context on every page load/refresh so RLS never breaks
+      setSupabaseContext(user.id, user.role);
+    }
   }, [user, hydrated, router.pathname]);
 
-  // Show nothing until store is rehydrated — prevents flash/redirect
   if (!hydrated) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">

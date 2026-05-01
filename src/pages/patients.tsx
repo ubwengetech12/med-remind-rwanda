@@ -2,14 +2,16 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/store/authStore';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import {
   Plus, Search, X, ChevronRight, Phone, MapPin,
   ShieldCheck, Activity, Pill, Calendar, FlaskConical,
-  AlertTriangle, UserPlus, Clock
+  AlertTriangle, UserPlus, Clock, Trash2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
+import toast from 'react-hot-toast';
 
 interface Patient {
   id: string; phone: string; full_name?: string;
@@ -29,6 +31,7 @@ interface Visit {
 
 export default function PatientsPage() {
   const router = useRouter();
+  const { user } = useAuthStore();
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -36,16 +39,35 @@ export default function PatientsPage() {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [expandedVisit, setExpandedVisit] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => { fetchPatients(); }, []);
 
   const fetchPatients = async () => {
     setLoading(true);
+
+    // Step 1: get patient IDs who visited this pharmacy
+    const { data: visits } = await supabase
+      .from('patient_visits')
+      .select('patient_id')
+      .eq('pharmacy_id', user?.id);
+
+    const patientIds = [...new Set((visits || []).map(v => v.patient_id).filter(Boolean))];
+
+    if (patientIds.length === 0) {
+      setPatients([]);
+      setLoading(false);
+      return;
+    }
+
+    // Step 2: fetch only those patients
     const { data } = await supabase
       .from('users')
       .select('*')
       .eq('role', 'patient')
+      .in('id', patientIds)
       .order('created_at', { ascending: false });
+
     setPatients(data || []);
     setLoading(false);
   };
@@ -66,10 +88,40 @@ export default function PatientsPage() {
         visit_appointments(appointment_date, appointment_time, notes)
       `)
       .eq('patient_id', p.id)
+      .eq('pharmacy_id', user?.id)
       .order('visit_date', { ascending: false });
     setVisits(data || []);
     setSelected({ ...p, _visitCount: data?.length || 0 });
     setLoadingDetail(false);
+  };
+
+  const deletePatient = async (p: Patient) => {
+    if (!confirm(`Delete ${p.full_name || 'this patient'}? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      // Delete visits for this pharmacy first
+      await supabase
+        .from('patient_visits')
+        .delete()
+        .eq('patient_id', p.id)
+        .eq('pharmacy_id', user?.id);
+
+      // Delete the patient user record
+      const { error } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', p.id);
+
+      if (error) throw error;
+
+      toast.success('Patient deleted');
+      setSelected(null);
+      fetchPatients();
+    } catch (err) {
+      toast.error('Failed to delete patient');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const filtered = patients.filter(p =>
@@ -173,7 +225,15 @@ export default function PatientsPage() {
                   <p className="text-muted text-sm flex items-center gap-1"><Phone size={12} />{selected.phone}</p>
                 </div>
               </div>
-              <button onClick={() => setSelected(null)} className="text-muted hover:text-white mt-1"><X size={20} /></button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => deletePatient(selected)}
+                  disabled={deleting}
+                  className="text-red-400 hover:text-red-300 hover:bg-red-900/20 p-1.5 rounded-lg transition-colors disabled:opacity-50">
+                  <Trash2 size={16} />
+                </button>
+                <button onClick={() => setSelected(null)} className="text-muted hover:text-white p-1.5"><X size={20} /></button>
+              </div>
             </div>
 
             <div className="p-6 space-y-5">
