@@ -5,9 +5,9 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/store/authStore';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import {
-  Plus, Search, X, ChevronRight, Phone, MapPin,
+  Plus, Search, X, ChevronRight, ChevronDown, ChevronUp, Phone, MapPin,
   ShieldCheck, Activity, Pill, Calendar, FlaskConical,
-  AlertTriangle, UserPlus, Clock, Trash2, CheckCircle
+  AlertTriangle, UserPlus, Clock, Trash2, CheckCircle, Edit2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, parseISO } from 'date-fns';
@@ -249,11 +249,11 @@ export default function PatientsPage() {
       {selected && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
           onClick={() => setSelected(null)}>
-          <div className="bg-card border border-border rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+          <div className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
 
             {/* Header */}
-            <div className="flex items-start justify-between p-6 border-b border-border sticky top-0 bg-card z-10">
+            <div className="flex items-start justify-between p-5 border-b border-border sticky top-0 bg-card z-10">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl bg-primary-900/40 flex items-center justify-center text-primary-400 text-xl font-bold">
                   {(selected.full_name || 'P')[0].toUpperCase()}
@@ -264,9 +264,7 @@ export default function PatientsPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => deletePatient(selected)}
-                  disabled={deleting}
+                <button onClick={() => deletePatient(selected)} disabled={deleting}
                   className="text-red-400 hover:text-red-300 hover:bg-red-900/20 p-1.5 rounded-lg transition-colors disabled:opacity-50">
                   <Trash2 size={16} />
                 </button>
@@ -274,274 +272,196 @@ export default function PatientsPage() {
               </div>
             </div>
 
-            <div className="p-6 space-y-5">
+            <div className="p-5 space-y-5">
 
-              {/* Info grid */}
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                {[
-                  { label: 'ID Number', val: selected.id_number },
-                  { label: 'Insurance', val: selected.insurance },
-                  { label: 'Village', val: selected.village },
-                  { label: 'Cell', val: selected.cell },
-                  { label: 'Sector', val: selected.sector },
-                  { label: 'District', val: selected.district },
-                ].filter(f => f.val).map(f => (
-                  <div key={f.label} className="bg-surface rounded-xl p-3">
-                    <p className="text-muted text-xs mb-0.5">{f.label}</p>
-                    <p className="text-white text-sm font-medium">{f.val}</p>
-                  </div>
+              {/* Registration info */}
+              <div>
+                <p className="text-white text-sm font-semibold mb-2">Registration Info</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  {[
+                    { label: 'ID Number', val: selected.id_number },
+                    { label: 'Insurance', val: selected.insurance },
+                    { label: 'Village', val: selected.village },
+                    { label: 'Cell', val: selected.cell },
+                    { label: 'Sector', val: selected.sector },
+                    { label: 'District', val: selected.district },
+                    { label: 'Registered', val: selected.created_at ? format(parseISO(selected.created_at), 'dd MMM yyyy') : null },
+                    { label: 'Total Visits', val: selected._visitCount != null ? String(selected._visitCount) : null },
+                  ].filter(f => f.val).map(f => (
+                    <div key={f.label} className="bg-surface rounded-xl p-3">
+                      <p className="text-muted text-xs mb-0.5">{f.label}</p>
+                      <p className="text-white text-sm font-medium">{f.val}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* SMS send box */}
+              <PatientSmsBox patient={selected} />
+
+              {/* Tabs */}
+              <div className="flex gap-1 border-b border-border">
+                {(['visits', 'medications'] as const).map(t => (
+                  <button key={t} onClick={() => setDetailTab(t)}
+                    className={cn('px-4 py-2 text-sm font-medium capitalize transition-colors',
+                      detailTab === t ? 'text-primary-400 border-b-2 border-primary-400' : 'text-muted hover:text-white')}>
+                    {t}
+                  </button>
                 ))}
               </div>
 
-              {/* Stats row */}
-              <div className="flex gap-3">
-                <div className="flex-1 bg-surface rounded-xl p-3 text-center">
-                  <p className="text-muted text-xs mb-1">Total Visits</p>
-                  <p className="text-white font-semibold">{selected._visitCount ?? 0}</p>
+              {loadingDetail ? (
+                <div className="space-y-2">
+                  {Array(3).fill(0).map((_, i) => <div key={i} className="h-16 bg-border/30 rounded-xl animate-pulse" />)}
                 </div>
-                <div className="flex-1 bg-surface rounded-xl p-3 text-center">
-                  <p className="text-muted text-xs mb-1">Active Meds</p>
-                  <p className="text-primary-400 font-semibold">{patientMeds.filter(m => m.is_active).length}</p>
-                </div>
-                <div className="flex-1 bg-surface rounded-xl p-3 text-center">
-                  <p className="text-muted text-xs mb-1">Registered</p>
-                  <p className="text-white font-semibold text-xs">
-                    {format(parseISO(selected.created_at), 'MMM d, yyyy')}
-                  </p>
-                </div>
-              </div>
+              ) : detailTab === 'visits' ? (
+                <div className="space-y-3">
+                  {visits.length === 0 ? (
+                    <p className="text-muted text-sm text-center py-6">No visits recorded</p>
+                  ) : visits.map(v => (
+                    <div key={v.id} className="bg-surface border border-border rounded-xl overflow-hidden">
+                      <button onClick={() => setExpandedVisit(expandedVisit === v.id ? null : v.id)}
+                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-white/5 transition-colors">
+                        <div>
+                          <p className="text-white text-sm font-medium">
+                            Visit — {v.visit_date ? format(parseISO(v.visit_date), 'dd MMM yyyy') : 'Date unknown'}
+                          </p>
+                          <p className="text-muted text-xs">{v.status}</p>
+                        </div>
+                        {expandedVisit === v.id
+                          ? <ChevronUp size={16} className="text-muted" />
+                          : <ChevronDown size={16} className="text-muted" />}
+                      </button>
 
-              {/* Tabs: Visits | Medications */}
-              <div className="flex gap-1 bg-surface rounded-xl p-1">
-                <button
-                  onClick={() => setDetailTab('visits')}
-                  className={cn('flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors',
-                    detailTab === 'visits' ? 'bg-primary-500 text-white' : 'text-muted hover:text-white')}>
-                  <Clock size={13} /> Visit History
-                </button>
-                <button
-                  onClick={() => setDetailTab('medications')}
-                  className={cn('flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-colors',
-                    detailTab === 'medications' ? 'bg-primary-500 text-white' : 'text-muted hover:text-white')}>
-                  <Pill size={13} /> Medications
-                  {patientMeds.filter(m => m.is_active).length > 0 && (
-                    <span className="bg-white/20 text-white text-xs rounded-full px-1.5 py-0.5 leading-none">
-                      {patientMeds.filter(m => m.is_active).length}
-                    </span>
-                  )}
-                </button>
-              </div>
+                      {expandedVisit === v.id && (
+                        <div className="px-4 pb-4 space-y-3 border-t border-border pt-3">
 
-              {/* VISITS TAB */}
-              {detailTab === 'visits' && (
-                <div>
-                  {loadingDetail ? (
-                    <div className="space-y-2">
-                      {Array(3).fill(0).map((_, i) => <div key={i} className="h-12 bg-border rounded-xl animate-pulse" />)}
-                    </div>
-                  ) : visits.length === 0 ? (
-                    <p className="text-muted text-sm">No visits recorded yet</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {visits.map(v => {
-                        const isOpen = expandedVisit === v.id;
-                        const disease = v.visit_diseases?.[0];
-                        const rx = v.visit_prescriptions || [];
-                        const appts = v.visit_appointments || [];
-                        const tests = v.visit_tests || [];
-                        const avoids = v.visit_avoidances || [];
+                          {(v.visit_diseases || []).length > 0 && (
+                            <div>
+                              <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-1">Diagnosis</p>
+                              {v.visit_diseases!.map((d, i) => (
+                                <div key={i} className="text-sm text-white">
+                                  {d.found_by_doctor && <p>Doctor: <span className="text-primary-300">{d.found_by_doctor}</span></p>}
+                                  {d.reported_by_patient && <p>Patient reported: <span className="text-yellow-300">{d.reported_by_patient}</span></p>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
 
-                        return (
-                          <div key={v.id} className="border border-border rounded-xl overflow-hidden">
-                            <button
-                              onClick={() => setExpandedVisit(isOpen ? null : v.id)}
-                              className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors text-left">
-                              <div className="flex items-center gap-2">
-                                <Calendar size={14} className="text-primary-400" />
-                                <span className="text-white text-sm font-medium">
-                                  {format(parseISO(v.visit_date), 'MMM d, yyyy')}
-                                </span>
-                                {disease?.reported_by_patient && (
-                                  <span className="text-xs bg-yellow-900/30 text-yellow-400 border border-yellow-900/40 px-2 py-0.5 rounded-lg truncate max-w-[120px]">
-                                    {disease.reported_by_patient}
-                                  </span>
-                                )}
-                                {rx.length > 0 && (
-                                  <span className="text-xs bg-primary-900/30 text-primary-400 border border-primary-900/40 px-2 py-0.5 rounded-lg">
-                                    {rx.length} med{rx.length > 1 ? 's' : ''}
-                                  </span>
-                                )}
+                          {(v.visit_tests || []).length > 0 && (
+                            <div>
+                              <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-1">Tests</p>
+                              {v.visit_tests!.map((t, i) => (
+                                <p key={i} className="text-sm text-white">{t.test_name || (t.has_test ? 'Test ordered' : 'No test')}</p>
+                              ))}
+                            </div>
+                          )}
+
+                          {(v.visit_prescriptions || []).length > 0 && (
+                            <div>
+                              <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-1">Prescriptions</p>
+                              <div className="space-y-1">
+                                {v.visit_prescriptions!.map((rx, i) => (
+                                  <div key={i} className="bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                                    <p className="text-white font-medium">{rx.medicine_name} {rx.dosage ? `· ${rx.dosage}` : ''}</p>
+                                    <p className="text-muted text-xs">{rx.times_per_day}x/day · qty: {rx.quantity_given ?? '—'}</p>
+                                  </div>
+                                ))}
                               </div>
-                              <ChevronRight size={14} className={cn('text-muted transition-transform flex-shrink-0', isOpen && 'rotate-90')} />
-                            </button>
+                            </div>
+                          )}
 
-                            {isOpen && (
-                              <div className="border-t border-border px-4 pb-4 pt-3 space-y-4 bg-surface/40">
+                          {(v.visit_avoidances || []).length > 0 && (
+                            <div>
+                              <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-1">Avoidances</p>
+                              {v.visit_avoidances!.map((a, i) => (
+                                <p key={i} className="text-sm text-yellow-300">{a.avoidance}</p>
+                              ))}
+                            </div>
+                          )}
 
-                                {/* Diseases */}
-                                {(disease?.reported_by_patient || disease?.found_by_doctor) && (
-                                  <div>
-                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1">
-                                      <Activity size={11} /> Disease / Diagnosis
-                                    </p>
-                                    {disease.reported_by_patient && (
-                                      <p className="text-white text-sm">
-                                        <span className="text-muted text-xs">Patient reported: </span>{disease.reported_by_patient}
-                                      </p>
-                                    )}
-                                    {disease.found_by_doctor && (
-                                      <p className="text-white text-sm mt-0.5">
-                                        <span className="text-muted text-xs">Doctor found: </span>{disease.found_by_doctor}
-                                      </p>
-                                    )}
-                                  </div>
-                                )}
+                          {(v.visit_appointments || []).length > 0 && (
+                            <div>
+                              <p className="text-muted text-xs font-semibold uppercase tracking-wider mb-1">Appointments</p>
+                              {v.visit_appointments!.map((a, i) => (
+                                <div key={i} className="bg-gray-800 rounded-lg px-3 py-2 text-sm">
+                                  <p className="text-white">{format(parseISO(a.appointment_date), 'dd MMM yyyy')} {a.appointment_time || ''}</p>
+                                  {a.notes && <p className="text-muted text-xs">{a.notes}</p>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
 
-                                {/* Tests */}
-                                {tests.some(t => t.has_test) && (
-                                  <div>
-                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><FlaskConical size={11} /> Tests</p>
-                                    {tests.filter(t => t.has_test).map((t, i) => (
-                                      <p key={i} className="text-white text-sm">{t.test_name || 'Test ordered'}</p>
-                                    ))}
-                                  </div>
-                                )}
-
-                                {/* Prescriptions / Medicine Received */}
-                                {rx.length > 0 && (
-                                  <div>
-                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1">
-                                      <Pill size={11} /> Medicine Received
-                                    </p>
-                                    <div className="space-y-1">
-                                      {rx.map((r, i) => (
-                                        <div key={i} className="bg-card rounded-lg px-3 py-2">
-                                          <div className="flex items-center gap-1.5">
-                                            <CheckCircle size={12} className="text-green-400 flex-shrink-0" />
-                                            <p className="text-white text-sm font-medium">{r.medicine_name}</p>
-                                          </div>
-                                          <p className="text-muted text-xs mt-0.5 ml-4">
-                                            {r.type && <span>{r.type}</span>}
-                                            {r.dosage && <span> · {r.dosage}</span>}
-                                            {r.times_per_day && <span> · {r.times_per_day}x/day</span>}
-                                            {r.quantity_given && <span> · Qty: {r.quantity_given}</span>}
-                                          </p>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* Avoidances */}
-                                {avoids.length > 0 && (
-                                  <div>
-                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><AlertTriangle size={11} /> Avoidances</p>
-                                    {avoids.map((a, i) => (
-                                      <p key={i} className="text-white text-sm">• {a.avoidance}</p>
-                                    ))}
-                                  </div>
-                                )}
-
-                                {/* Appointments */}
-                                {appts.length > 0 && (
-                                  <div>
-                                    <p className="text-muted text-xs font-semibold mb-1.5 flex items-center gap-1"><Calendar size={11} /> Appointments</p>
-                                    {appts.map((a, i) => (
-                                      <div key={i} className="bg-card rounded-lg px-3 py-2">
-                                        <p className="text-white text-sm">
-                                          {format(parseISO(a.appointment_date), 'MMM d, yyyy')}
-                                          {a.appointment_time && ` at ${a.appointment_time}`}
-                                        </p>
-                                        {a.notes && <p className="text-muted text-xs mt-0.5">{a.notes}</p>}
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ))}
                 </div>
-              )}
-
-              {/* MEDICATIONS TAB */}
-              {detailTab === 'medications' && (
-                <div>
-                  {loadingDetail ? (
-                    <div className="space-y-2">
-                      {Array(3).fill(0).map((_, i) => <div key={i} className="h-16 bg-border rounded-xl animate-pulse" />)}
-                    </div>
-                  ) : patientMeds.length === 0 ? (
+              ) : (
+                <div className="space-y-2">
+                  {patientMeds.length === 0 ? (
                     <div className="text-center py-8 space-y-2">
                       <Pill size={24} className="text-muted mx-auto" />
                       <p className="text-muted text-sm">No medications assigned yet</p>
                       <p className="text-muted text-xs">Go to Medications → Assign to Patient</p>
                     </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {patientMeds.map(med => (
-                        <div key={med.id} className={cn(
-                          'border rounded-xl p-4',
-                          med.is_active ? 'border-primary-900/40 bg-primary-900/10' : 'border-border bg-surface/40'
-                        )}>
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
-                                <p className="text-white font-medium text-sm truncate">
-                                  {(med.medication as any)?.name || 'Unknown Medicine'}
-                                </p>
-                                {med.medication && (
-                                  <span className={cn(
-                                    'text-xs px-1.5 py-0.5 rounded flex-shrink-0',
-                                    safetyColor[(med.medication as any).safety_level] || 'text-muted bg-surface'
-                                  )}>
-                                    {(med.medication as any).safety_level}
-                                  </span>
-                                )}
-                              </div>
-                              {med.dosage && (
-                                <p className="text-muted text-xs mb-1">Dosage: <span className="text-white/80">{med.dosage}</span></p>
-                              )}
-                              {med.food_instruction && (
-                                <p className="text-muted text-xs mb-1">
-                                  Food: <span className="text-white/80">{FOOD_LABELS[med.food_instruction] || med.food_instruction}</span>
-                                </p>
-                              )}
-                              {med.schedule_times && med.schedule_times.length > 0 && (
-                                <div className="flex items-center gap-1 flex-wrap mt-1.5">
-                                  <Clock size={11} className="text-primary-400" />
-                                  {med.schedule_times.map((t, i) => (
-                                    <span key={i} className="text-xs bg-primary-900/30 text-primary-300 border border-primary-900/40 px-1.5 py-0.5 rounded">
-                                      {formatTime(t)}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                              {(med.start_date || med.end_date) && (
-                                <p className="text-muted text-xs mt-1.5">
-                                  {med.start_date && <span>From {format(parseISO(med.start_date), 'MMM d, yyyy')}</span>}
-                                  {med.end_date && <span> → {format(parseISO(med.end_date), 'MMM d, yyyy')}</span>}
-                                </p>
-                              )}
-                              {med.notes && (
-                                <p className="text-muted text-xs mt-1 italic">{med.notes}</p>
-                              )}
-                            </div>
-                            <span className={cn(
-                              'text-xs font-semibold px-2 py-0.5 rounded-lg flex-shrink-0',
-                              med.is_active ? 'bg-green-900/30 text-green-400' : 'bg-surface text-muted'
-                            )}>
-                              {med.is_active ? 'Active' : 'Ended'}
-                            </span>
+                  ) : patientMeds.map(med => (
+                    <div key={med.id} className={cn(
+                      'border rounded-xl p-4',
+                      med.is_active ? 'border-primary-900/40 bg-primary-900/10' : 'border-border bg-surface/40'
+                    )}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="text-white font-medium text-sm truncate">
+                              {(med.medication as any)?.name || 'Unknown Medicine'}
+                            </p>
+                            {med.medication && (
+                              <span className={cn(
+                                'text-xs px-1.5 py-0.5 rounded flex-shrink-0',
+                                safetyColor[(med.medication as any).safety_level] || 'text-muted bg-surface'
+                              )}>
+                                {(med.medication as any).safety_level}
+                              </span>
+                            )}
                           </div>
+                          {med.dosage && (
+                            <p className="text-muted text-xs mb-1">Dosage: <span className="text-white/80">{med.dosage}</span></p>
+                          )}
+                          {med.food_instruction && (
+                            <p className="text-muted text-xs mb-1">
+                              Food: <span className="text-white/80">{FOOD_LABELS[med.food_instruction] || med.food_instruction}</span>
+                            </p>
+                          )}
+                          {med.schedule_times && med.schedule_times.length > 0 && (
+                            <div className="flex items-center gap-1 flex-wrap mt-1.5">
+                              <Clock size={11} className="text-primary-400" />
+                              {med.schedule_times.map((t, i) => (
+                                <span key={i} className="text-xs bg-primary-900/30 text-primary-300 border border-primary-900/40 px-1.5 py-0.5 rounded">
+                                  {formatTime(t)}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          {(med.start_date || med.end_date) && (
+                            <p className="text-muted text-xs mt-1.5">
+                              {med.start_date && <span>From {format(parseISO(med.start_date), 'MMM d, yyyy')}</span>}
+                              {med.end_date && <span> → {format(parseISO(med.end_date), 'MMM d, yyyy')}</span>}
+                            </p>
+                          )}
+                          {med.notes && (
+                            <p className="text-muted text-xs mt-1 italic">{med.notes}</p>
+                          )}
                         </div>
-                      ))}
+                        <span className={cn(
+                          'text-xs font-semibold px-2 py-0.5 rounded-lg flex-shrink-0',
+                          med.is_active ? 'bg-green-900/30 text-green-400' : 'bg-surface text-muted'
+                        )}>
+                          {med.is_active ? 'Active' : 'Ended'}
+                        </span>
+                      </div>
                     </div>
-                  )}
+                  ))}
                 </div>
               )}
 
@@ -559,3 +479,268 @@ export default function PatientsPage() {
     </DashboardLayout>
   );
 }
+
+
+const DEFAULT_TEMPLATES = [
+  {
+    label: 'Medication Reminder',
+    text: (p: any) => `Dear ${p.full_name || 'Patient'}, this is a reminder to take your medication as prescribed. Please follow your dosage schedule. Contact us if you have any questions.`,
+  },
+  {
+    label: 'Appointment Reminder',
+    text: (p: any) => `Dear ${p.full_name || 'Patient'}, you have an upcoming appointment at our pharmacy. Please come on time and bring your prescription. Thank you.`,
+  },
+  {
+    label: 'Refill Ready',
+    text: (p: any) => `Dear ${p.full_name || 'Patient'}, your medication refill is ready for pickup. Please visit us at your earliest convenience. Thank you.`,
+  },
+  {
+    label: 'Follow-up',
+    text: (p: any) => `Dear ${p.full_name || 'Patient'}, please remember your follow-up visit. Taking your medication consistently is important for your recovery. We are here to help.`,
+  },
+  {
+    label: 'Custom Message',
+    text: (_: any) => '',
+  },
+];
+
+function PatientSmsBox({ patient }: { patient: any }) {
+  const { user } = useAuthStore();
+  const [msg, setMsg] = useState(() => DEFAULT_TEMPLATES[0].text(patient));
+  const [saving, setSaving] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState(0);
+  const [doseTime, setDoseTime] = useState('08:00');
+  const [medicationName, setMedicationName] = useState('General Reminder');
+  const [reminders, setReminders] = useState<any[]>([]);
+  const [loadingReminders, setLoadingReminders] = useState(true);
+  const [editing, setEditing] = useState<any | null>(null);
+  const [editMsg, setEditMsg] = useState('');
+  const [editDoseTime, setEditDoseTime] = useState('');
+  const [editMedName, setEditMedName] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+
+  useEffect(() => { loadReminders(); }, [patient.id]);
+
+  const loadReminders = async () => {
+    setLoadingReminders(true);
+    const { data } = await supabase
+      .from('sms_schedules')
+      .select('*')
+      .eq('user_id', patient.id)
+      .order('created_at', { ascending: false });
+    setReminders(data || []);
+    setLoadingReminders(false);
+  };
+
+  const applyTemplate = (index: number) => {
+    setSelectedTemplate(index);
+    setMsg(DEFAULT_TEMPLATES[index].text(patient));
+  };
+
+  const save = async () => {
+    if (!msg.trim()) return;
+    setSaving(true);
+    const { error } = await supabase.from('sms_schedules').insert({
+      user_id: patient.id,
+      phone: patient.phone,
+      medication_name: medicationName,
+      dose_time: doseTime,
+      send_at: doseTime,
+      message: msg.trim(),
+      status: 'pending',
+      language: 'english',
+      pharmacy_id: user?.id,
+    });
+    if (error) toast.error(error.message);
+    else {
+      toast.success('Reminder saved — will send daily at ' + doseTime);
+      setMsg(DEFAULT_TEMPLATES[0].text(patient));
+      setSelectedTemplate(0);
+      setMedicationName('General Reminder');
+      setDoseTime('08:00');
+      loadReminders();
+    }
+    setSaving(false);
+  };
+
+  const startEdit = (r: any) => {
+    setEditing(r);
+    setEditMsg(r.message);
+    setEditDoseTime(r.dose_time);
+    setEditMedName(r.medication_name);
+  };
+
+  const saveEdit = async () => {
+    if (!editMsg.trim()) return;
+    setEditSaving(true);
+    const { error } = await supabase.from('sms_schedules').update({
+      message: editMsg.trim(),
+      dose_time: editDoseTime,
+      send_at: editDoseTime,
+      medication_name: editMedName,
+    }).eq('id', editing.id);
+    if (error) toast.error(error.message);
+    else {
+      toast.success('Reminder updated');
+      setEditing(null);
+      loadReminders();
+    }
+    setEditSaving(false);
+  };
+
+  const deleteReminder = async (id: string) => {
+    if (!confirm('Delete this reminder?')) return;
+    await supabase.from('sms_schedules').delete().eq('id', id);
+    toast.success('Deleted');
+    loadReminders();
+  };
+
+  const statusColor: Record<string, string> = {
+    pending: 'text-yellow-400 bg-yellow-900/30',
+    sent: 'text-green-400 bg-green-900/30',
+    failed: 'text-red-400 bg-red-900/30',
+  };
+
+  return (
+    <div className="space-y-4">
+
+      {/* New reminder form */}
+      <div className="bg-surface border border-border rounded-xl p-4 space-y-3">
+        <p className="text-white text-sm font-semibold">Schedule SMS Reminder for {patient.full_name}</p>
+
+        <div className="flex flex-wrap gap-1.5">
+          {DEFAULT_TEMPLATES.map((t, i) => (
+            <button key={i} onClick={() => applyTemplate(i)}
+              className={cn(
+                'text-xs px-3 py-1.5 rounded-lg border transition-colors',
+                selectedTemplate === i
+                  ? 'bg-primary-500/20 border-primary-500/40 text-primary-300'
+                  : 'border-border text-muted hover:text-white hover:border-white/20'
+              )}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="text-muted text-xs mb-1 block">Medicine / Reason</label>
+            <input value={medicationName} onChange={e => setMedicationName(e.target.value)}
+              className="w-full bg-gray-800 border border-border rounded-xl px-3 py-2 text-white text-sm outline-none"
+              placeholder="e.g. Paracetamol" />
+          </div>
+          <div>
+            <label className="text-muted text-xs mb-1 block">Send Time (daily)</label>
+            <input type="time" value={doseTime} onChange={e => setDoseTime(e.target.value)}
+              className="w-full bg-gray-800 border border-border rounded-xl px-3 py-2 text-white text-sm outline-none" />
+          </div>
+        </div>
+
+        <textarea value={msg} onChange={e => setMsg(e.target.value)} rows={3}
+          placeholder="Select a template above or type a custom message..."
+          className="w-full bg-gray-800 border border-border rounded-xl px-3 py-2 text-white text-sm outline-none resize-none placeholder:text-muted" />
+
+        <div className="flex items-center justify-between">
+          <p className="text-muted text-xs">{msg.length} chars · sends daily at {doseTime}</p>
+          <button onClick={save} disabled={saving || !msg.trim()}
+            className="bg-primary-500 hover:bg-primary-400 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-sm font-semibold transition-colors">
+            {saving ? 'Saving...' : 'Save Reminder'}
+          </button>
+        </div>
+      </div>
+
+      {/* Saved reminders list */}
+      <div className="space-y-2">
+        <p className="text-white text-sm font-semibold">Saved Reminders ({reminders.length})</p>
+
+        {loadingReminders ? (
+          <div className="space-y-2">
+            {Array(2).fill(0).map((_, i) => <div key={i} className="h-16 bg-border/30 rounded-xl animate-pulse" />)}
+          </div>
+        ) : reminders.length === 0 ? (
+          <p className="text-muted text-xs text-center py-4">No reminders saved yet</p>
+        ) : reminders.map(r => (
+          <div key={r.id} className="bg-surface border border-border rounded-xl p-3">
+            {editing?.id === r.id ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-muted text-xs mb-1 block">Medicine / Reason</label>
+                    <input value={editMedName} onChange={e => setEditMedName(e.target.value)}
+                      className="w-full bg-gray-800 border border-border rounded-lg px-3 py-1.5 text-white text-sm outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-muted text-xs mb-1 block">Send Time</label>
+                    <input type="time" value={editDoseTime} onChange={e => setEditDoseTime(e.target.value)}
+                      className="w-full bg-gray-800 border border-border rounded-lg px-3 py-1.5 text-white text-sm outline-none" />
+                  </div>
+                </div>
+                <textarea value={editMsg} onChange={e => setEditMsg(e.target.value)} rows={3}
+                  className="w-full bg-gray-800 border border-border rounded-lg px-3 py-2 text-white text-sm outline-none resize-none" />
+                <div className="flex gap-2">
+                  <button onClick={() => setEditing(null)}
+                    className="flex-1 border border-border text-muted rounded-xl py-1.5 text-sm">Cancel</button>
+                  <button onClick={saveEdit} disabled={editSaving}
+                    className="flex-1 bg-primary-500 text-white rounded-xl py-1.5 text-sm font-semibold">
+                    {editSaving ? 'Saving...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="text-white text-sm font-medium">{r.medication_name}</p>
+                    <span className={cn('text-xs px-2 py-0.5 rounded-full', statusColor[r.status] || 'text-muted bg-gray-700')}>
+                      {r.status}
+                    </span>
+                  </div>
+                  <p className="text-muted text-xs">Daily at {r.dose_time}</p>
+                  <p className="text-muted text-xs truncate mt-0.5">{r.message}</p>
+                </div>
+                <div className="flex gap-1 flex-shrink-0">
+                  <button onClick={() => startEdit(r)}
+                    className="text-primary-400 hover:text-primary-300 p-1.5"><Edit2 size={14} /></button>
+                  <button onClick={() => deleteReminder(r.id)}
+                    className="text-red-400 hover:text-red-300 p-1.5"><Trash2 size={14} /></button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

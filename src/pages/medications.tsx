@@ -1,12 +1,14 @@
 'use client';
+
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/store/authStore';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import {
-  Plus, Search, X, ChevronRight, Shield, AlertTriangle, Edit2, Trash2,
-  UserPlus, Clock, Pill, Package, Upload, CheckCircle
+  Plus, X, ChevronRight, ChevronDown, ChevronUp, Shield, AlertTriangle,
+  Edit2, Trash2, UserPlus, Clock, Pill, Package, Upload, CheckCircle, Search
 } from 'lucide-react';
-import { useAuthStore } from '@/store/authStore';
+
 import toast from 'react-hot-toast';
 import { cn } from '@/lib/utils';
 import { buildSmsMessage } from '@/lib/smsTemplates';
@@ -405,6 +407,9 @@ export default function MedicationsPage() {
         {/* ── MEDICATIONS TAB ── */}
         {tab === 'medications' && (
           <>
+            {/* All prescriptions given to patients */}
+            <AllPatientPrescriptions />
+
             <div className="flex flex-wrap gap-3">
               <div className="flex-1 min-w-48 flex items-center gap-2 bg-card border border-border rounded-xl px-3 h-10">
                 <Search size={16} className="text-muted flex-shrink-0" />
@@ -858,5 +863,81 @@ export default function MedicationsPage() {
         </div>
       )}
     </DashboardLayout>
+  );
+}
+
+
+function AllPatientPrescriptions() {
+  const { user } = useAuthStore();
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase
+        .from('visit_prescriptions')
+        .select(`
+          id, medicine_name, dosage, times_per_day, duration_days, food_instruction,
+          visit:patient_visits!inner(
+            pharmacy_id,
+            patient:users(full_name, phone)
+          )
+        `)
+        .eq('visit.pharmacy_id', user?.id)
+        .order('id', { ascending: false });
+      setRows(data || []);
+      setLoading(false);
+    };
+    load();
+  }, []);
+
+  const filtered = rows.filter(r =>
+    (r.medicine_name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (r.visit?.patient?.full_name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (r.visit?.patient?.phone || '').includes(search)
+  );
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden mb-6">
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-4 hover:bg-white/5 transition-colors">
+        <h3 className="text-white font-semibold text-sm">All Medicines Given to Patients ({rows.length})</h3>
+        {open ? <ChevronUp size={16} className="text-muted" /> : <ChevronDown size={16} className="text-muted" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-border">
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2 bg-surface border border-border rounded-xl px-3 h-9">
+              <Search size={14} className="text-muted" />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by medicine or patient..."
+                className="flex-1 bg-transparent text-white text-sm outline-none placeholder:text-muted" />
+            </div>
+          </div>
+          {loading ? (
+            <div className="px-4 pb-4 space-y-2">{Array(4).fill(0).map((_,i) => <div key={i} className="h-12 bg-border/30 rounded-xl animate-pulse" />)}</div>
+          ) : filtered.length === 0 ? (
+            <p className="text-muted text-sm text-center py-8">No prescriptions found</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {filtered.map(r => (
+                <div key={r.id} className="px-5 py-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-white text-sm font-medium">{r.medicine_name} {r.dosage ? `· ${r.dosage}` : ''}</p>
+                    <p className="text-muted text-xs">{r.visit?.patient?.full_name || 'Unknown'} · {r.visit?.patient?.phone || ''}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-muted text-xs">{r.times_per_day}x/day</p>
+                    <p className="text-muted text-xs">{r.duration_days ? `${r.duration_days} days` : ''}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

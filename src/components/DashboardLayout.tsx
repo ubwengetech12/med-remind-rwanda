@@ -7,6 +7,7 @@ import {
   MessageSquare, Bell, LogOut, Menu, X, ChevronRight, Building2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { AdminPanel } from './AdminPanel';
 
 const NAV_ITEMS = [
   { href: '/',                      icon: LayoutDashboard, label: 'Overview' },
@@ -29,6 +30,32 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
   const { user, pharmacy, pharmacist, signOut } = useAuthStore() as any;
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const [clickCount, setClickCount] = useState(0);
+  const [showAdminPrompt, setShowAdminPrompt] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [adminPass, setAdminPass] = useState('');
+  const [adminError, setAdminError] = useState(false);
+
+  const handleLogoClick = () => {
+    const next = clickCount + 1;
+    setClickCount(next);
+    if (next >= 20) {
+      setClickCount(0);
+      setShowAdminPrompt(true);
+    }
+  };
+
+  const handleAdminLogin = () => {
+    if (adminPass === process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+      setAdminOpen(true);
+      setShowAdminPrompt(false);
+      setAdminPass('');
+      setAdminError(false);
+    } else {
+      setAdminError(true);
+    }
+  };
+
   const handleSignOut = () => {
     signOut?.();
     router.replace('/login');
@@ -48,8 +75,12 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
           'fixed top-0 left-0 h-full w-64 bg-gray-900 border-r border-border z-50 flex flex-col transition-transform duration-200',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         )}>
+          {/* Logo + pharmacy name */}
           <div className="flex items-center gap-3 px-5 py-5 border-b border-border">
-            <div className="w-9 h-9 bg-primary-500/10 rounded-xl flex items-center justify-center flex-shrink-0">
+            <div
+              onClick={handleLogoClick}
+              className="w-9 h-9 bg-primary-500/10 rounded-xl flex items-center justify-center flex-shrink-0 cursor-pointer select-none"
+            >
               <span className="text-lg">💊</span>
             </div>
             <div className="min-w-0">
@@ -102,6 +133,39 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
           {children}
         </main>
       </div>
+
+      {/* Admin password prompt */}
+      {showAdminPrompt && (
+        <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-border rounded-2xl p-6 w-full max-w-sm space-y-4">
+            <h2 className="text-white font-semibold text-lg">Admin Access</h2>
+            <input
+              type="password"
+              value={adminPass}
+              onChange={e => { setAdminPass(e.target.value); setAdminError(false); }}
+              onKeyDown={e => e.key === 'Enter' && handleAdminLogin()}
+              placeholder="Enter admin password"
+              className="w-full bg-gray-800 border border-border rounded-xl px-4 py-2.5 text-white text-sm outline-none"
+              autoFocus
+            />
+            {adminError && <p className="text-red-400 text-xs">Incorrect password</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setShowAdminPrompt(false); setAdminPass(''); setAdminError(false); }}
+                className="flex-1 border border-border text-muted rounded-xl py-2 text-sm">
+                Cancel
+              </button>
+              <button onClick={handleAdminLogin}
+                className="flex-1 bg-primary-500 text-white rounded-xl py-2 text-sm font-semibold">
+                Enter
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Panel */}
+      {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
     </div>
   );
 }
