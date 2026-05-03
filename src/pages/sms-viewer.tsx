@@ -38,16 +38,29 @@ export default function SmsViewerPage() {
 
   useEffect(() => { fetchSms(); }, []);
 
-  const fetchSms = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('sms_schedules')
-      .select('*, patient:users!sms_schedules_user_id_fkey(full_name, phone)')
-      .order('created_at', { ascending: false });
+ const fetchSms = async () => {
+  setLoading(true);
 
-    if (!error) setRecords(data || []);
-    setLoading(false);
-  };
+  const { data: smsData, error } = await supabase
+    .from('sms_schedules')
+    .select('*')
+    .eq('pharmacy_id', user?.id)
+    .order('created_at', { ascending: false });
+
+  if (error || !smsData) { setLoading(false); return; }
+
+  const userIds = Array.from(new Set(smsData.map((r: any) => r.user_id).filter(Boolean)));
+  const { data: patientData } = userIds.length > 0
+    ? await supabase.from('users').select('id, full_name, phone').in('id', userIds)
+    : { data: [] };
+
+  const patientMap = Object.fromEntries((patientData || []).map((p: any) => [p.id, p]));
+  const merged = smsData.map((r: any) => ({ ...r, patient: patientMap[r.user_id] || null }));
+
+  setRecords(merged);
+  setLoading(false);
+};
+
 
   const filtered = records
     .filter(r => {

@@ -227,6 +227,7 @@ export default function RegisterPatientPage() {
               exactTime: formatTime(time),
               supportNumber,
             });
+            
             return supabase.from('sms_schedules').insert({
               user_id: patientId,
               phone: s1.phone,
@@ -236,11 +237,11 @@ export default function RegisterPatientPage() {
               message,
               language: patientLang,
               status: 'pending',
-              pharmacy_id: pharmacyId,
-            });
+     
+            })
           })
         );
-        await Promise.allSettled(smsTasks);
+        await Promise.all(smsTasks);
       }
 
       // 7. Avoidances
